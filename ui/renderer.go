@@ -145,6 +145,18 @@ func (r *Renderer) RenderAgentThinking(text string) string {
 	return r.dimRenderer.Render(fmt.Sprintf("  %s", text)) + "\n"
 }
 
+func (r *Renderer) RenderRemoteInfo(host string, hostname string, os string) string {
+	info := fmt.Sprintf("**Remote:** `%s`", host)
+	if hostname != "" {
+		info += fmt.Sprintf(" (%s", hostname)
+		if os != "" {
+			info += fmt.Sprintf(", %s", os)
+		}
+		info += ")"
+	}
+	return info
+}
+
 func (r *Renderer) RenderHelpMessage() string {
 	help := "**Help**\n"
 	help += "- `↑`/`↓` : navigate in history\n"

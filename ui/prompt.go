@@ -20,8 +20,9 @@ const (
 )
 
 type Prompt struct {
-	mode  PromptMode
-	input textinput.Model
+	mode       PromptMode
+	input      textinput.Model
+	remoteHost string
 }
 
 func NewPrompt(mode PromptMode) *Prompt {
@@ -59,6 +60,20 @@ func (p *Prompt) SetMode(mode PromptMode) *Prompt {
 		p.input.EchoMode = textinput.EchoNormal
 	}
 
+	if p.remoteHost != "" && mode == AgentPromptMode {
+		p.SetRemoteHost(p.remoteHost)
+	}
+
+	return p
+}
+
+func (p *Prompt) SetRemoteHost(host string) *Prompt {
+	p.remoteHost = host
+	if host != "" && p.mode == AgentPromptMode {
+		style := getPromptStyle(AgentPromptMode)
+		p.input.Prompt = style.Render(fmt.Sprintf("🤖 %s > ", host))
+		p.input.Placeholder = fmt.Sprintf("Task for %s...", host)
+	}
 	return p
 }
 
@@ -103,7 +118,11 @@ func (p *Prompt) View() string {
 
 func (p *Prompt) AsString() string {
 	style := getPromptStyle(p.mode)
-	return fmt.Sprintf("%s%s", style.Render(getPromptIcon(p.mode)), style.Render(p.input.Value()))
+	icon := getPromptIcon(p.mode)
+	if p.remoteHost != "" && p.mode == AgentPromptMode {
+		icon = style.Render(fmt.Sprintf("🤖 %s > ", p.remoteHost))
+	}
+	return fmt.Sprintf("%s%s", icon, style.Render(p.input.Value()))
 }
 
 func getPromptStyle(mode PromptMode) lipgloss.Style {

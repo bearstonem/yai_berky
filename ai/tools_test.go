@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ekkinox/yai/run"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -160,4 +161,76 @@ func TestToolExecutorBadJSON(t *testing.T) {
 	}
 	result := te.Execute(tc)
 	assert.Contains(t, result.Content, "error parsing arguments")
+}
+
+func TestToolExecutorRemoteFlag(t *testing.T) {
+	te := NewToolExecutor(false, "/tmp")
+	assert.False(t, te.IsRemote())
+
+	te.SetRemoteHost("user@host", "/home/user")
+	assert.True(t, te.IsRemote())
+	assert.Equal(t, "user@host", te.remoteHost)
+	assert.Equal(t, "/home/user", te.homeDir)
+}
+
+func TestToolExecutorSetRemoteHostPreservesHomeDir(t *testing.T) {
+	te := NewToolExecutor(false, "/local/home")
+	assert.Equal(t, "/local/home", te.homeDir)
+
+	te.SetRemoteHost("user@host", "/remote/home")
+	assert.Equal(t, "/remote/home", te.homeDir)
+
+	te.SetRemoteHost("user@host", "")
+	assert.Equal(t, "/remote/home", te.homeDir)
+}
+
+func TestShellQuote(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"simple", "'simple'"},
+		{"with spaces", "'with spaces'"},
+		{"with'quote", "'with'\"'\"'quote'"},
+		{"", "''"},
+		{"/path/to/file", "'/path/to/file'"},
+		{"hello world's best", "'hello world'\"'\"'s best'"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.expected, shellQuote(tt.input))
+		})
+	}
+}
+
+func TestFormatCapturedOutput(t *testing.T) {
+	t.Run("with stdout only", func(t *testing.T) {
+		output := &run.CapturedOutput{ExitCode: 0, Stdout: "hello\n", Stderr: ""}
+		result := formatCapturedOutput(output)
+		assert.Contains(t, result, "exit_code: 0")
+		assert.Contains(t, result, "stdout:\nhello\n")
+		assert.NotContains(t, result, "stderr:")
+	})
+
+	t.Run("with stderr only", func(t *testing.T) {
+		output := &run.CapturedOutput{ExitCode: 1, Stdout: "", Stderr: "error\n"}
+		result := formatCapturedOutput(output)
+		assert.Contains(t, result, "exit_code: 1")
+		assert.Contains(t, result, "stderr:\nerror\n")
+		assert.NotContains(t, result, "stdout:")
+	})
+
+	t.Run("no output", func(t *testing.T) {
+		output := &run.CapturedOutput{ExitCode: 0, Stdout: "", Stderr: ""}
+		result := formatCapturedOutput(output)
+		assert.Contains(t, result, "(no output)")
+	})
+
+	t.Run("both stdout and stderr", func(t *testing.T) {
+		output := &run.CapturedOutput{ExitCode: 0, Stdout: "out\n", Stderr: "err\n"}
+		result := formatCapturedOutput(output)
+		assert.Contains(t, result, "stdout:\nout\n")
+		assert.Contains(t, result, "stderr:\nerr\n")
+	})
 }

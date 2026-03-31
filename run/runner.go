@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"time"
@@ -66,6 +67,48 @@ func CaptureCommand(command string, workingDir string, timeout time.Duration) (*
 		cmd.Dir = workingDir
 	}
 
+	return captureExec(ctx, cmd, timeout)
+}
+
+func truncateOutput(s string) string {
+	if len(s) <= MaxOutputBytes {
+		return s
+	}
+	return s[:MaxOutputBytes] + "\n... [output truncated at 50KB]"
+}
+
+var sshBaseArgs = []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10"}
+
+func CaptureSSHCommand(host, command string, timeout time.Duration) (*CapturedOutput, error) {
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	args := append(sshBaseArgs, host, command)
+	cmd := exec.CommandContext(ctx, "ssh", args...)
+
+	return captureExec(ctx, cmd, timeout)
+}
+
+func CaptureSSHCommandWithStdin(host, command string, stdin io.Reader, timeout time.Duration) (*CapturedOutput, error) {
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	args := append(sshBaseArgs, host, command)
+	cmd := exec.CommandContext(ctx, "ssh", args...)
+	cmd.Stdin = stdin
+
+	return captureExec(ctx, cmd, timeout)
+}
+
+func captureExec(ctx context.Context, cmd *exec.Cmd, timeout time.Duration) (*CapturedOutput, error) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -92,13 +135,6 @@ func CaptureCommand(command string, workingDir string, timeout time.Duration) (*
 		Stderr:   truncateOutput(stderr.String()),
 		ExitCode: exitCode,
 	}, nil
-}
-
-func truncateOutput(s string) string {
-	if len(s) <= MaxOutputBytes {
-		return s
-	}
-	return s[:MaxOutputBytes] + "\n... [output truncated at 50KB]"
 }
 
 func CommandContainsSudo(cmd string) bool {

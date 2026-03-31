@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -89,8 +90,9 @@ func AgentTools() []Tool {
 }
 
 type ToolExecutor struct {
-	allowSudo bool
-	homeDir   string
+	allowSudo  bool
+	homeDir    string
+	remoteHost string
 }
 
 func NewToolExecutor(allowSudo bool, homeDir string) *ToolExecutor {
@@ -98,6 +100,17 @@ func NewToolExecutor(allowSudo bool, homeDir string) *ToolExecutor {
 		allowSudo: allowSudo,
 		homeDir:   homeDir,
 	}
+}
+
+func (te *ToolExecutor) SetRemoteHost(host string, remoteHomeDir string) {
+	te.remoteHost = host
+	if remoteHomeDir != "" {
+		te.homeDir = remoteHomeDir
+	}
+}
+
+func (te *ToolExecutor) IsRemote() bool {
+	return te.remoteHost != ""
 }
 
 func (te *ToolExecutor) Execute(tc ToolCall) ToolResult {
@@ -140,24 +153,24 @@ func (te *ToolExecutor) executeRunCommand(argsJSON string) string {
 		workDir = te.homeDir
 	}
 
-	output, err := run.CaptureCommand(args.Command, workDir, 60*time.Second)
+	var output *run.CapturedOutput
+	var err error
+
+	if te.IsRemote() {
+		remoteCmd := args.Command
+		if workDir != "" {
+			remoteCmd = fmt.Sprintf("cd %s && %s", shellQuote(workDir), args.Command)
+		}
+		output, err = run.CaptureSSHCommand(te.remoteHost, remoteCmd, 60*time.Second)
+	} else {
+		output, err = run.CaptureCommand(args.Command, workDir, 60*time.Second)
+	}
+
 	if err != nil {
 		return fmt.Sprintf("error executing command: %s", err)
 	}
 
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("exit_code: %d\n", output.ExitCode))
-	if output.Stdout != "" {
-		result.WriteString(fmt.Sprintf("stdout:\n%s\n", output.Stdout))
-	}
-	if output.Stderr != "" {
-		result.WriteString(fmt.Sprintf("stderr:\n%s\n", output.Stderr))
-	}
-	if output.Stdout == "" && output.Stderr == "" {
-		result.WriteString("(no output)\n")
-	}
-
-	return result.String()
+	return formatCapturedOutput(output)
 }
 
 func (te *ToolExecutor) executeReadFile(argsJSON string) string {
@@ -166,6 +179,21 @@ func (te *ToolExecutor) executeReadFile(argsJSON string) string {
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+
+	if te.IsRemote() {
+		output, err := run.CaptureSSHCommand(te.remoteHost, fmt.Sprintf("cat %s", shellQuote(args.Path)), 30*time.Second)
+		if err != nil {
+			return fmt.Sprintf("error reading file: %s", err)
+		}
+		if output.ExitCode != 0 {
+			return fmt.Sprintf("error reading file: %s", output.Stderr)
+		}
+		content := output.Stdout
+		if len(content) > run.MaxOutputBytes {
+			content = content[:run.MaxOutputBytes] + "\n... [file truncated at 50KB]"
+		}
+		return content
 	}
 
 	data, err := os.ReadFile(args.Path)
@@ -187,6 +215,24 @@ func (te *ToolExecutor) executeListDirectory(argsJSON string) string {
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+
+	if te.IsRemote() {
+		output, err := run.CaptureSSHCommand(te.remoteHost, fmt.Sprintf("ls -la %s", shellQuote(args.Path)), 30*time.Second)
+		if err != nil {
+			return fmt.Sprintf("error listing directory: %s", err)
+		}
+		if output.ExitCode != 0 {
+			return fmt.Sprintf("error listing directory: %s", output.Stderr)
+		}
+		content := output.Stdout
+		if content == "" {
+			return "(empty directory)"
+		}
+		if len(content) > run.MaxOutputBytes {
+			content = content[:run.MaxOutputBytes] + "\n... [listing truncated at 50KB]"
+		}
+		return content
 	}
 
 	entries, err := os.ReadDir(args.Path)
@@ -234,6 +280,21 @@ func (te *ToolExecutor) executeWriteFile(argsJSON string) string {
 		return fmt.Sprintf("error parsing arguments: %s", err)
 	}
 
+	if te.IsRemote() {
+		dir := filepath.Dir(args.Path)
+		encoded := base64.StdEncoding.EncodeToString([]byte(args.Content))
+		remoteCmd := fmt.Sprintf("mkdir -p %s && base64 -d > %s", shellQuote(dir), shellQuote(args.Path))
+		stdin := strings.NewReader(encoded)
+		output, err := run.CaptureSSHCommandWithStdin(te.remoteHost, remoteCmd, stdin, 30*time.Second)
+		if err != nil {
+			return fmt.Sprintf("error writing file: %s", err)
+		}
+		if output.ExitCode != 0 {
+			return fmt.Sprintf("error writing file: %s", output.Stderr)
+		}
+		return fmt.Sprintf("successfully wrote %d bytes to %s (remote)", len(args.Content), args.Path)
+	}
+
 	dir := filepath.Dir(args.Path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Sprintf("error creating directory %s: %s", dir, err)
@@ -244,4 +305,23 @@ func (te *ToolExecutor) executeWriteFile(argsJSON string) string {
 	}
 
 	return fmt.Sprintf("successfully wrote %d bytes to %s", len(args.Content), args.Path)
+}
+
+func formatCapturedOutput(output *run.CapturedOutput) string {
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("exit_code: %d\n", output.ExitCode))
+	if output.Stdout != "" {
+		result.WriteString(fmt.Sprintf("stdout:\n%s\n", output.Stdout))
+	}
+	if output.Stderr != "" {
+		result.WriteString(fmt.Sprintf("stderr:\n%s\n", output.Stderr))
+	}
+	if output.Stdout == "" && output.Stderr == "" {
+		result.WriteString("(no output)\n")
+	}
+	return result.String()
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }

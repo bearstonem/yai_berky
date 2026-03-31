@@ -50,6 +50,8 @@ type UiState struct {
 	agentApprovalPending bool
 	// setup flag
 	forceSetup bool
+	// remote SSH target
+	remoteHost string
 }
 
 type UiDimensions struct {
@@ -73,6 +75,11 @@ type Ui struct {
 }
 
 func NewUi(input *UiInput) *Ui {
+	prompt := NewPrompt(input.GetPromptMode())
+	if input.GetRemote() != "" {
+		prompt.SetRemoteHost(input.GetRemote())
+	}
+
 	return &Ui{
 		state: UiState{
 			error:       nil,
@@ -88,13 +95,14 @@ func NewUi(input *UiInput) *Ui {
 			command:     "",
 			configStep:  configStepProvider,
 			forceSetup:  input.IsSetup(),
+			remoteHost:  input.GetRemote(),
 		},
 		dimensions: UiDimensions{
 			150,
 			150,
 		},
 		components: UiComponents{
-			prompt: NewPrompt(input.GetPromptMode()),
+			prompt:   prompt,
 			renderer: NewRenderer(
 				glamour.WithAutoStyle(),
 				glamour.WithWordWrap(150),
@@ -544,12 +552,26 @@ func (u *Ui) startRepl(cfg *config.Config) tea.Cmd {
 				engine.SetPipe(u.state.pipe)
 			}
 
+			if u.state.remoteHost != "" {
+				if err := engine.SetRemoteHost(u.state.remoteHost); err != nil {
+					return err
+				}
+			}
+
 			u.engine = engine
 
 			providerInfo := u.components.renderer.RenderProviderInfo(cfg.GetAiConfig())
 			u.state.buffer = fmt.Sprintf("%s\n\n", providerInfo)
+			if u.state.remoteHost != "" && engine.GetRemoteInfo() != nil {
+				info := engine.GetRemoteInfo()
+				remoteInfo := u.components.renderer.RenderRemoteInfo(u.state.remoteHost, info.Hostname, info.OS)
+				u.state.buffer += fmt.Sprintf("%s\n\n", remoteInfo)
+			}
 			u.state.command = ""
 			u.components.prompt = NewPrompt(u.state.promptMode)
+			if u.state.remoteHost != "" {
+				u.components.prompt.SetRemoteHost(u.state.remoteHost)
+			}
 
 			return nil
 		},
@@ -575,6 +597,13 @@ func (u *Ui) startCli(cfg *config.Config) tea.Cmd {
 		engine.SetPipe(u.state.pipe)
 	}
 
+	if u.state.remoteHost != "" {
+		if err := engine.SetRemoteHost(u.state.remoteHost); err != nil {
+			u.state.error = err
+			return nil
+		}
+	}
+
 	u.engine = engine
 	u.state.querying = true
 	u.state.confirming = false
@@ -583,6 +612,21 @@ func (u *Ui) startCli(cfg *config.Config) tea.Cmd {
 
 	switch u.state.promptMode {
 	case AgentPromptMode:
+		var bannerCmd tea.Cmd
+		if u.state.remoteHost != "" && engine.GetRemoteInfo() != nil {
+			info := engine.GetRemoteInfo()
+			remoteInfo := u.components.renderer.RenderRemoteInfo(u.state.remoteHost, info.Hostname, info.OS)
+			bannerCmd = tea.Println(u.components.renderer.RenderContent(remoteInfo))
+		}
+		if bannerCmd != nil {
+			return tea.Sequence(
+				bannerCmd,
+				tea.Batch(
+					u.startAgent(u.state.args),
+					u.awaitAgentEvent(),
+				),
+			)
+		}
 		return tea.Batch(
 			u.startAgent(u.state.args),
 			u.awaitAgentEvent(),

@@ -6,12 +6,22 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/ekkinox/yai/config"
+	"github.com/ekkinox/yai/run"
 	"github.com/ekkinox/yai/system"
 )
 
 const noexec = "[noexec]"
+
+type RemoteSystemInfo struct {
+	OS       string
+	Hostname string
+	Shell    string
+	HomeDir  string
+	Username string
+}
 
 type Engine struct {
 	mode          EngineMode
@@ -27,6 +37,8 @@ type Engine struct {
 	pipe          string
 	running       bool
 	cancelFn      context.CancelFunc
+	remoteHost    string
+	remoteInfo    *RemoteSystemInfo
 }
 
 func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
@@ -109,6 +121,62 @@ func (e *Engine) GetAgentChannel() chan AgentEvent {
 
 func (e *Engine) SendApproval(approved bool) {
 	e.approvalChan <- approved
+}
+
+func (e *Engine) GetRemoteHost() string {
+	return e.remoteHost
+}
+
+func (e *Engine) GetRemoteInfo() *RemoteSystemInfo {
+	return e.remoteInfo
+}
+
+func (e *Engine) SetRemoteHost(host string) error {
+	e.remoteHost = host
+
+	info, err := probeRemoteSystem(host)
+	if err != nil {
+		return fmt.Errorf("failed to connect to %s: %w", host, err)
+	}
+
+	e.remoteInfo = info
+	e.toolExecutor.SetRemoteHost(host, info.HomeDir)
+
+	return nil
+}
+
+func probeRemoteSystem(host string) (*RemoteSystemInfo, error) {
+	output, err := run.CaptureSSHCommand(host, "uname -s; echo $SHELL; echo $HOME; hostname; whoami", 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	if output.ExitCode != 0 {
+		errMsg := output.Stderr
+		if errMsg == "" {
+			errMsg = "SSH connection failed"
+		}
+		return nil, fmt.Errorf("%s", errMsg)
+	}
+
+	lines := strings.Split(strings.TrimSpace(output.Stdout), "\n")
+	info := &RemoteSystemInfo{}
+	if len(lines) > 0 {
+		info.OS = strings.TrimSpace(lines[0])
+	}
+	if len(lines) > 1 {
+		info.Shell = strings.TrimSpace(lines[1])
+	}
+	if len(lines) > 2 {
+		info.HomeDir = strings.TrimSpace(lines[2])
+	}
+	if len(lines) > 3 {
+		info.Hostname = strings.TrimSpace(lines[3])
+	}
+	if len(lines) > 4 {
+		info.Username = strings.TrimSpace(lines[4])
+	}
+
+	return info, nil
 }
 
 func (e *Engine) SetPipe(pipe string) *Engine {
@@ -373,8 +441,25 @@ func (e *Engine) prepareSystemPromptChatPart() string {
 }
 
 func (e *Engine) prepareSystemPromptAgentPart() string {
-	prompt := "You are Yai, an autonomous terminal agent. You help the user accomplish tasks by using the tools available to you.\n\n" +
-		"You have access to tools that let you run shell commands, read and write files, and list directories.\n" +
+	prompt := "You are Yai, an autonomous terminal agent. You help the user accomplish tasks by using the tools available to you.\n\n"
+
+	if e.remoteHost != "" {
+		prompt += fmt.Sprintf("IMPORTANT: You are operating on a REMOTE host via SSH (%s).\n", e.remoteHost)
+		prompt += "All commands, file reads, file writes, and directory listings execute on the remote system, NOT the local machine.\n"
+		if e.remoteInfo != nil {
+			prompt += fmt.Sprintf("Remote system: %s", e.remoteInfo.Hostname)
+			if e.remoteInfo.OS != "" {
+				prompt += fmt.Sprintf(", OS: %s", e.remoteInfo.OS)
+			}
+			if e.remoteInfo.Username != "" {
+				prompt += fmt.Sprintf(", user: %s", e.remoteInfo.Username)
+			}
+			prompt += "\n"
+		}
+		prompt += "\n"
+	}
+
+	prompt += "You have access to tools that let you run shell commands, read and write files, and list directories.\n" +
 		"When given a task, break it down into steps and use your tools to complete it.\n" +
 		"After each tool call, observe the result and decide what to do next.\n" +
 		"Continue until the task is fully complete, then provide a brief summary of what you did.\n\n" +
@@ -484,6 +569,30 @@ func (e *Engine) AgentCompletion(input string, autoExecute bool) error {
 }
 
 func (e *Engine) prepareSystemPromptContextPart() string {
+	if e.remoteHost != "" && e.remoteInfo != nil {
+		part := fmt.Sprintf("Remote context (SSH target: %s): ", e.remoteHost)
+		if e.remoteInfo.OS != "" {
+			part += fmt.Sprintf("operating system is %s, ", e.remoteInfo.OS)
+		}
+		if e.remoteInfo.Hostname != "" {
+			part += fmt.Sprintf("hostname is %s, ", e.remoteInfo.Hostname)
+		}
+		if e.remoteInfo.HomeDir != "" {
+			part += fmt.Sprintf("home directory is %s, ", e.remoteInfo.HomeDir)
+		}
+		if e.remoteInfo.Shell != "" {
+			part += fmt.Sprintf("shell is %s, ", e.remoteInfo.Shell)
+		}
+		if e.remoteInfo.Username != "" {
+			part += fmt.Sprintf("user is %s, ", e.remoteInfo.Username)
+		}
+		part += "take this into account. "
+		if e.config.GetUserConfig().GetPreferences() != "" {
+			part += fmt.Sprintf("Also, %s.", e.config.GetUserConfig().GetPreferences())
+		}
+		return part
+	}
+
 	part := "My context: "
 
 	if e.config.GetSystemConfig().GetOperatingSystem() != system.UnknownOperatingSystem {

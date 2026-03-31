@@ -131,6 +131,22 @@ You can also use agent mode from the command line:
 yai -a find all TODO comments in this project
 ```
 
+#### Remote Mode
+
+Use `--remote` to run agent mode on a remote machine via SSH. Yai stays on your local machine -- all commands, file reads, and writes tunnel through SSH automatically. No install needed on the remote host.
+
+```shell
+# One-shot task on a remote host
+yai --remote user@192.168.1.81 check disk usage
+
+# Interactive REPL on a remote host
+yai --remote user@192.168.1.81
+```
+
+The `--remote` flag implies agent mode, so `-a` is not required. On startup, Yai probes the remote system (OS, shell, home directory) and includes this context in the prompt so the AI generates correct commands for the target.
+
+**Requirements:** Key-based SSH authentication must be configured for the target host (Yai uses `BatchMode=yes` and will not prompt for passwords).
+
 **Safety:** Commands time out after 60 seconds. Output is capped at 50KB to avoid flooding the conversation. Press `ctrl+c` at any time to interrupt the agent. Sudo rules from `USER_ALLOW_SUDO` are enforced.
 
 ### Sudo Support

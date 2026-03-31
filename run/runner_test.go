@@ -2,6 +2,7 @@ package run
 
 import (
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,8 @@ func TestRun(t *testing.T) {
 	t.Run("PrepareEditSettingsCommand", testPrepareEditSettingsCommand)
 	t.Run("CommandContainsSudo", testCommandContainsSudo)
 	t.Run("CaptureCommand", testCaptureCommand)
+	t.Run("CaptureSSHCommand", testCaptureSSHCommand)
+	t.Run("CaptureSSHCommandWithStdin", testCaptureSSHCommandWithStdin)
 }
 
 func testRunCommand(t *testing.T) {
@@ -129,5 +132,28 @@ func testCaptureCommand(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 0, output.ExitCode)
 		assert.Equal(t, "ok\n", output.Stdout)
+	})
+}
+
+func testCaptureSSHCommand(t *testing.T) {
+	t.Run("connection timeout on unreachable host", func(t *testing.T) {
+		output, err := CaptureSSHCommand("user@192.0.2.1", "echo hello", 5*time.Second)
+		require.NoError(t, err)
+		assert.NotEqual(t, 0, output.ExitCode)
+	})
+
+	t.Run("default timeout used when zero", func(t *testing.T) {
+		output, err := CaptureSSHCommand("user@192.0.2.1", "echo hello", 12*time.Second)
+		require.NoError(t, err)
+		assert.NotEqual(t, 0, output.ExitCode)
+	})
+}
+
+func testCaptureSSHCommandWithStdin(t *testing.T) {
+	t.Run("stdin passed to ssh", func(t *testing.T) {
+		stdin := strings.NewReader("test content")
+		output, err := CaptureSSHCommandWithStdin("user@192.0.2.1", "cat", stdin, 5*time.Second)
+		require.NoError(t, err)
+		assert.NotEqual(t, 0, output.ExitCode)
 	})
 }
