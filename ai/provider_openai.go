@@ -87,7 +87,7 @@ func (p *OpenAIProvider) toOpenAITools(tools []Tool) []openai.Tool {
 	for i, t := range tools {
 		out[i] = openai.Tool{
 			Type: openai.ToolTypeFunction,
-			Function: openai.FunctionDefinition{
+			Function: &openai.FunctionDefinition{
 				Name:        t.Name,
 				Description: t.Description,
 				Parameters:  t.Parameters,
@@ -101,10 +101,10 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req CompletionRequest) (s
 	msgs := p.toOpenAIMessages(req.Messages)
 
 	resp, err := p.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
-		Model:       req.Model,
-		MaxTokens:   req.MaxTokens,
-		Temperature: float32(req.Temperature),
-		Messages:    msgs,
+		Model:               req.Model,
+		MaxCompletionTokens: req.MaxTokens,
+		Temperature:         float32(req.Temperature),
+		Messages:            msgs,
 	})
 	if err != nil {
 		return "", err
@@ -121,10 +121,10 @@ func (p *OpenAIProvider) CompleteWithTools(ctx context.Context, req CompletionRe
 	msgs := p.toOpenAIMessages(req.Messages)
 
 	apiReq := openai.ChatCompletionRequest{
-		Model:       req.Model,
-		MaxTokens:   req.MaxTokens,
-		Temperature: float32(req.Temperature),
-		Messages:    msgs,
+		Model:               req.Model,
+		MaxCompletionTokens: req.MaxTokens,
+		Temperature:         float32(req.Temperature),
+		Messages:            msgs,
 	}
 	if len(req.Tools) > 0 {
 		apiReq.Tools = p.toOpenAITools(req.Tools)
@@ -163,11 +163,11 @@ func (p *OpenAIProvider) StreamComplete(ctx context.Context, req CompletionReque
 	msgs := p.toOpenAIMessages(req.Messages)
 
 	stream, err := p.client.CreateChatCompletionStream(ctx, openai.ChatCompletionRequest{
-		Model:       req.Model,
-		MaxTokens:   req.MaxTokens,
-		Temperature: float32(req.Temperature),
-		Messages:    msgs,
-		Stream:      true,
+		Model:               req.Model,
+		MaxCompletionTokens: req.MaxTokens,
+		Temperature:         float32(req.Temperature),
+		Messages:            msgs,
+		Stream:              true,
 	})
 	if err != nil {
 		ch <- StreamChunk{Err: err, Done: true}
