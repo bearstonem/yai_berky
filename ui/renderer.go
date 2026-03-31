@@ -121,7 +121,8 @@ func (r *Renderer) RenderHelpMessage() string {
 	help += "- `ctrl+s`: edit settings\n"
 	help += "- `ctrl+r`: clear terminal and reset discussion history\n"
 	help += "- `ctrl+l`: clear terminal but keep discussion history\n"
-	help += "- `ctrl+c`: exit or interrupt command execution\n"
+	help += "- `ctrl+c`: exit or interrupt command execution\n\n"
+	help += "**Sudo:** set `USER_ALLOW_SUDO` to `true` in settings (`ctrl+s`) to allow commands with elevated privileges.\n"
 
 	return help
 }

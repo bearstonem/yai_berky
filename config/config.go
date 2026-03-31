@@ -89,6 +89,7 @@ func NewConfig() (*Config, error) {
 		user: UserConfig{
 			defaultPromptMode: viper.GetString(user_default_prompt_mode),
 			preferences:       viper.GetString(user_preferences),
+			allowSudo:         viper.GetBool(user_allow_sudo),
 		},
 		system: system,
 	}, nil
@@ -120,6 +121,7 @@ func WriteConfig(provider, key, model, baseURL string, write bool) (*Config, err
 
 	viper.SetDefault(user_default_prompt_mode, "exec")
 	viper.SetDefault(user_preferences, "")
+	viper.SetDefault(user_allow_sudo, false)
 
 	if write {
 		err := viper.SafeWriteConfigAs(sys.GetConfigFile())

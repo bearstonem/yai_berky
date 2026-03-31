@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os/exec"
 	"strconv"
 	"strings"
 
@@ -303,6 +304,9 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			u.state.confirming = true
 			u.state.command = msg.GetCommand()
 			output = u.components.renderer.RenderContent(fmt.Sprintf("`%s`", u.state.command))
+			if run.CommandContainsSudo(u.state.command) {
+				output += fmt.Sprintf("  %s\n", u.components.renderer.RenderWarning("[sudo] this command requires elevated privileges"))
+			}
 			output += fmt.Sprintf("  %s\n\n  confirm execution? [y/N]", u.components.renderer.RenderHelp(msg.GetExplanation()))
 			u.components.prompt.Blur()
 		} else {
@@ -714,7 +718,12 @@ func (u *Ui) execCommand(input string) tea.Cmd {
 	u.state.confirming = false
 	u.state.executing = true
 
-	c := run.PrepareInteractiveCommand(input)
+	var c *exec.Cmd
+	if run.CommandContainsSudo(input) {
+		c = run.PrepareSudoInteractiveCommand(input)
+	} else {
+		c = run.PrepareInteractiveCommand(input)
+	}
 
 	return tea.ExecProcess(c, func(error error) tea.Msg {
 		u.state.executing = false

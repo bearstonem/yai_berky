@@ -287,13 +287,23 @@ func (e *Engine) prepareSystemPrompt() string {
 }
 
 func (e *Engine) prepareSystemPromptExecPart() string {
-	return "Your are Yai, a powerful terminal assistant generating a JSON containing a command line for my input.\n" +
+	prompt := "Your are Yai, a powerful terminal assistant generating a JSON containing a command line for my input.\n" +
 		"You will always reply using the following json structure: {\"cmd\":\"the command\", \"exp\": \"some explanation\", \"exec\": true}.\n" +
 		"Your answer will always only contain the json structure, never add any advice or supplementary detail or information, even if I asked the same question before.\n" +
 		"The field cmd will contain a single line command (don't use new lines, use separators like && and ; instead).\n" +
 		"The field exp will contain an short explanation of the command if you managed to generate an executable command, otherwise it will contain the reason of your failure.\n" +
-		"The field exec will contain true if you managed to generate an executable command, false otherwise." +
-		"\n" +
+		"The field exec will contain true if you managed to generate an executable command, false otherwise.\n"
+
+	if e.config.GetUserConfig().GetAllowSudo() {
+		prompt += "You are allowed to use sudo when a command requires elevated privileges. " +
+			"If a task clearly requires root access (installing packages, editing system files, managing services, etc.), " +
+			"include sudo in the command. Always mention in the explanation that the command requires elevated privileges.\n"
+	} else {
+		prompt += "Do NOT use sudo in commands. If a task requires elevated privileges, " +
+			"set exec to false and explain that the user needs to enable sudo in settings (ctrl+s, set USER_ALLOW_SUDO to true).\n"
+	}
+
+	prompt += "\n" +
 		"Examples:\n" +
 		"Me: list all files in my home dir\n" +
 		"Yai: {\"cmd\":\"ls ~\", \"exp\": \"list all files in your home dir\", \"exec\": true}\n" +
@@ -301,6 +311,8 @@ func (e *Engine) prepareSystemPromptExecPart() string {
 		"Yai: {\"cmd\":\"kubectl get pods --all-namespaces\", \"exp\": \"list pods form all k8s namespaces\", \"exec\": true}\n" +
 		"Me: how are you ?\n" +
 		"Yai: {\"cmd\":\"\", \"exp\": \"I'm good thanks but I cannot generate a command for this. Use the chat mode to discuss.\", \"exec\": false}"
+
+	return prompt
 }
 
 func (e *Engine) prepareSystemPromptChatPart() string {
