@@ -48,6 +48,8 @@ type UiState struct {
 	// agent mode state
 	agentRunning         bool
 	agentApprovalPending bool
+	// setup flag
+	forceSetup bool
 }
 
 type UiDimensions struct {
@@ -85,6 +87,7 @@ func NewUi(input *UiInput) *Ui {
 			buffer:      "",
 			command:     "",
 			configStep:  configStepProvider,
+			forceSetup:  input.IsSetup(),
 		},
 		dimensions: UiDimensions{
 			150,
@@ -103,6 +106,13 @@ func NewUi(input *UiInput) *Ui {
 }
 
 func (u *Ui) Init() tea.Cmd {
+	if u.state.forceSetup {
+		return tea.Sequence(
+			tea.ClearScreen,
+			u.startConfig(),
+		)
+	}
+
 	config, err := config.NewConfig()
 	if err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {

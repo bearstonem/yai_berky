@@ -14,15 +14,17 @@ type UiInput struct {
 	promptMode PromptMode
 	args       string
 	pipe       string
+	setup      bool
 }
 
 func NewUIInput() (*UiInput, error) {
 	flagSet := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 
-	var exec, chat, agent bool
+	var exec, chat, agent, setup bool
 	flagSet.BoolVar(&exec, "e", false, "exec prompt mode")
 	flagSet.BoolVar(&chat, "c", false, "chat prompt mode")
 	flagSet.BoolVar(&agent, "a", false, "agent prompt mode")
+	flagSet.BoolVar(&setup, "setup", false, "run the configuration wizard")
 	err := flagSet.Parse(os.Args[1:])
 	if err != nil {
 		fmt.Println("Error parsing flags:", err)
@@ -76,6 +78,7 @@ func NewUIInput() (*UiInput, error) {
 		promptMode: promptMode,
 		args:       strings.Join(args, " "),
 		pipe:       pipe,
+		setup:      setup,
 	}, nil
 }
 
@@ -93,4 +96,8 @@ func (i *UiInput) GetArgs() string {
 
 func (i *UiInput) GetPipe() string {
 	return i.pipe
+}
+
+func (i *UiInput) IsSetup() bool {
+	return i.setup
 }
