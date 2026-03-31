@@ -23,6 +23,11 @@ func TestEngineModeString(t *testing.T) {
 			expected: "chat",
 		},
 		{
+			name:     "AgentEngineMode",
+			mode:     AgentEngineMode,
+			expected: "agent",
+		},
+		{
 			name:     "UnknownEngineMode",
 			mode:     EngineMode(42),
 			expected: "chat",

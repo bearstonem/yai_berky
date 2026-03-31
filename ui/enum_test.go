@@ -21,6 +21,7 @@ func testPromptModeString(t *testing.T) {
 		{"Exec", ExecPromptMode, "exec"},
 		{"Config", ConfigPromptMode, "config"},
 		{"Chat", ChatPromptMode, "chat"},
+		{"Agent", AgentPromptMode, "agent"},
 		{"Default", DefaultPromptMode, "default"},
 	}
 
@@ -40,6 +41,7 @@ func testGetPromptModeFromString(t *testing.T) {
 		{"Exec", "exec", ExecPromptMode},
 		{"Config", "config", ConfigPromptMode},
 		{"Chat", "chat", ChatPromptMode},
+		{"Agent", "agent", AgentPromptMode},
 		{"Default", "unknown", DefaultPromptMode},
 	}
 

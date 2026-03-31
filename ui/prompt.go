@@ -15,6 +15,8 @@ const (
 	config_placeholder = "Enter your API key..."
 	chat_icon          = "💬 > "
 	chat_placeholder   = "Ask me something..."
+	agent_icon         = "🤖 > "
+	agent_placeholder  = "Give me a task..."
 )
 
 type Prompt struct {
@@ -110,6 +112,8 @@ func getPromptStyle(mode PromptMode) lipgloss.Style {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color(exec_color))
 	case ConfigPromptMode:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color(config_color))
+	case AgentPromptMode:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(agent_color))
 	default:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color(chat_color))
 	}
@@ -123,6 +127,8 @@ func getPromptIcon(mode PromptMode) string {
 		return style.Render(exec_icon)
 	case ConfigPromptMode:
 		return style.Render(config_icon)
+	case AgentPromptMode:
+		return style.Render(agent_icon)
 	default:
 		return style.Render(chat_icon)
 	}
@@ -134,6 +140,8 @@ func getPromptPlaceholder(mode PromptMode) string {
 		return exec_placeholder
 	case ConfigPromptMode:
 		return config_placeholder
+	case AgentPromptMode:
+		return agent_placeholder
 	default:
 		return chat_placeholder
 	}

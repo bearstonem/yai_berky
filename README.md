@@ -14,6 +14,11 @@
 
 You have any questions on random topics in mind? You can also ask `Yai`, and get the power of AI without leaving `/home`.
 
+**Three modes:**
+- **Exec** (`tab` to switch) -- describe what you want, get a single command, confirm with `y`
+- **Chat** -- ask questions, get markdown answers
+- **Agent** -- give a task, the AI autonomously runs commands, reads files, and iterates until it's done
+
 It is already aware of your:
 - operating system & distribution
 - username, shell & home directory
@@ -69,7 +74,8 @@ The configuration file lives at `~/.config/yai.json`. You can edit it directly o
   "AI_MAX_TOKENS": 2000,
   "USER_DEFAULT_PROMPT_MODE": "exec",
   "USER_PREFERENCES": "",
-  "USER_ALLOW_SUDO": false
+  "USER_ALLOW_SUDO": false,
+  "USER_AGENT_AUTO_EXECUTE": false
 }
 ```
 
@@ -82,11 +88,33 @@ The configuration file lives at `~/.config/yai.json`. You can edit it directly o
 | `AI_PROXY` | HTTP proxy URL |
 | `AI_TEMPERATURE` | Sampling temperature (0-2) |
 | `AI_MAX_TOKENS` | Maximum tokens in the response |
-| `USER_DEFAULT_PROMPT_MODE` | Default mode: `exec` or `chat` |
+| `USER_DEFAULT_PROMPT_MODE` | Default mode: `exec`, `chat`, or `agent` |
 | `USER_PREFERENCES` | Free-text preferences appended to the system prompt |
 | `USER_ALLOW_SUDO` | Allow commands with `sudo` (default `false`) |
+| `USER_AGENT_AUTO_EXECUTE` | Skip confirmation for each tool call in agent mode (default `false`) |
 
 Existing configs using the legacy `OPENAI_*` keys continue to work and are read as fallback values.
+
+### Agent Mode
+
+Agent mode lets the AI autonomously complete multi-step tasks. Press `tab` to cycle to the `🤖 agent` prompt, describe your task, and the AI will:
+
+1. Plan what needs to be done
+2. Run shell commands, read/write files as needed
+3. Observe the output and iterate
+4. Provide a summary when finished
+
+**Available tools:** `run_command`, `read_file`, `write_file`, `list_directory`
+
+By default, each tool call requires your confirmation (`y/N`). Set `USER_AGENT_AUTO_EXECUTE` to `true` to let the agent run without asking.
+
+You can also use agent mode from the command line:
+
+```shell
+yai -a find all TODO comments in this project
+```
+
+**Safety:** Commands time out after 60 seconds. Output is capped at 50KB to avoid flooding the conversation. Press `ctrl+c` at any time to interrupt the agent. Sudo rules from `USER_ALLOW_SUDO` are enforced.
 
 ### Sudo Support
 

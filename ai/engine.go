@@ -14,15 +14,19 @@ import (
 const noexec = "[noexec]"
 
 type Engine struct {
-	mode         EngineMode
-	config       *config.Config
-	provider     Provider
-	execMessages []Message
-	chatMessages []Message
-	channel      chan EngineChatStreamOutput
-	pipe         string
-	running      bool
-	cancelFn     context.CancelFunc
+	mode          EngineMode
+	config        *config.Config
+	provider      Provider
+	execMessages  []Message
+	chatMessages  []Message
+	agentMessages []Message
+	channel       chan EngineChatStreamOutput
+	agentChannel  chan AgentEvent
+	approvalChan  chan bool
+	toolExecutor  *ToolExecutor
+	pipe          string
+	running       bool
+	cancelFn      context.CancelFunc
 }
 
 func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
@@ -31,15 +35,22 @@ func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
 		return nil, err
 	}
 
+	homeDir := cfg.GetSystemConfig().GetHomeDirectory()
+	allowSudo := cfg.GetUserConfig().GetAllowSudo()
+
 	return &Engine{
-		mode:         mode,
-		config:       cfg,
-		provider:     provider,
-		execMessages: make([]Message, 0),
-		chatMessages: make([]Message, 0),
-		channel:      make(chan EngineChatStreamOutput),
-		pipe:         "",
-		running:      false,
+		mode:          mode,
+		config:        cfg,
+		provider:      provider,
+		execMessages:  make([]Message, 0),
+		chatMessages:  make([]Message, 0),
+		agentMessages: make([]Message, 0),
+		channel:       make(chan EngineChatStreamOutput),
+		agentChannel:  make(chan AgentEvent),
+		approvalChan:  make(chan bool),
+		toolExecutor:  NewToolExecutor(allowSudo, homeDir),
+		pipe:          "",
+		running:       false,
 	}, nil
 }
 
@@ -92,6 +103,14 @@ func (e *Engine) GetChannel() chan EngineChatStreamOutput {
 	return e.channel
 }
 
+func (e *Engine) GetAgentChannel() chan AgentEvent {
+	return e.agentChannel
+}
+
+func (e *Engine) SendApproval(approved bool) {
+	e.approvalChan <- approved
+}
+
 func (e *Engine) SetPipe(pipe string) *Engine {
 	e.pipe = pipe
 	return e
@@ -102,10 +121,17 @@ func (e *Engine) Interrupt() *Engine {
 		e.cancelFn()
 	}
 
-	e.channel <- EngineChatStreamOutput{
-		content:   "[Interrupt]",
-		last:      true,
-		interrupt: true,
+	if e.mode == AgentEngineMode {
+		e.agentChannel <- AgentEvent{
+			Type:    AgentEventDone,
+			Content: "[Interrupt]",
+		}
+	} else {
+		e.channel <- EngineChatStreamOutput{
+			content:   "[Interrupt]",
+			last:      true,
+			interrupt: true,
+		}
 	}
 
 	e.running = false
@@ -113,9 +139,12 @@ func (e *Engine) Interrupt() *Engine {
 }
 
 func (e *Engine) Clear() *Engine {
-	if e.mode == ExecEngineMode {
+	switch e.mode {
+	case ExecEngineMode:
 		e.execMessages = []Message{}
-	} else {
+	case AgentEngineMode:
+		e.agentMessages = []Message{}
+	default:
 		e.chatMessages = []Message{}
 	}
 	return e
@@ -124,6 +153,7 @@ func (e *Engine) Clear() *Engine {
 func (e *Engine) Reset() *Engine {
 	e.execMessages = []Message{}
 	e.chatMessages = []Message{}
+	e.agentMessages = []Message{}
 	return e
 }
 
@@ -232,9 +262,12 @@ func (e *Engine) ChatStreamCompletion(input string) error {
 
 func (e *Engine) appendUserMessage(content string) *Engine {
 	msg := Message{Role: "user", Content: content}
-	if e.mode == ExecEngineMode {
+	switch e.mode {
+	case ExecEngineMode:
 		e.execMessages = append(e.execMessages, msg)
-	} else {
+	case AgentEngineMode:
+		e.agentMessages = append(e.agentMessages, msg)
+	default:
 		e.chatMessages = append(e.chatMessages, msg)
 	}
 	return e
@@ -242,12 +275,19 @@ func (e *Engine) appendUserMessage(content string) *Engine {
 
 func (e *Engine) appendAssistantMessage(content string) *Engine {
 	msg := Message{Role: "assistant", Content: content}
-	if e.mode == ExecEngineMode {
+	switch e.mode {
+	case ExecEngineMode:
 		e.execMessages = append(e.execMessages, msg)
-	} else {
+	case AgentEngineMode:
+		e.agentMessages = append(e.agentMessages, msg)
+	default:
 		e.chatMessages = append(e.chatMessages, msg)
 	}
 	return e
+}
+
+func (e *Engine) appendAgentMessage(msg Message) {
+	e.agentMessages = append(e.agentMessages, msg)
 }
 
 func (e *Engine) prepareCompletionMessages() []Message {
@@ -262,9 +302,12 @@ func (e *Engine) prepareCompletionMessages() []Message {
 		})
 	}
 
-	if e.mode == ExecEngineMode {
+	switch e.mode {
+	case ExecEngineMode:
 		messages = append(messages, e.execMessages...)
-	} else {
+	case AgentEngineMode:
+		messages = append(messages, e.agentMessages...)
+	default:
 		messages = append(messages, e.chatMessages...)
 	}
 
@@ -277,9 +320,12 @@ func (e *Engine) preparePipePrompt() string {
 
 func (e *Engine) prepareSystemPrompt() string {
 	var bodyPart string
-	if e.mode == ExecEngineMode {
+	switch e.mode {
+	case ExecEngineMode:
 		bodyPart = e.prepareSystemPromptExecPart()
-	} else {
+	case AgentEngineMode:
+		bodyPart = e.prepareSystemPromptAgentPart()
+	default:
 		bodyPart = e.prepareSystemPromptChatPart()
 	}
 
@@ -324,6 +370,117 @@ func (e *Engine) prepareSystemPromptChatPart() string {
 		"Yai: The answer for `2+2` is `4`\n" +
 		"Me: +2 again ?\n" +
 		"Yai: The answer is `6`\n"
+}
+
+func (e *Engine) prepareSystemPromptAgentPart() string {
+	prompt := "You are Yai, an autonomous terminal agent. You help the user accomplish tasks by using the tools available to you.\n\n" +
+		"You have access to tools that let you run shell commands, read and write files, and list directories.\n" +
+		"When given a task, break it down into steps and use your tools to complete it.\n" +
+		"After each tool call, observe the result and decide what to do next.\n" +
+		"Continue until the task is fully complete, then provide a brief summary of what you did.\n\n" +
+		"Guidelines:\n" +
+		"- Prefer small, incremental commands so you can observe results and adjust.\n" +
+		"- If a command fails, read the error output and try a different approach.\n" +
+		"- Always explain your reasoning briefly before using a tool.\n" +
+		"- When the task is complete, respond with a text summary (no tool calls).\n" +
+		"- Be careful with destructive operations (rm -rf, overwriting files). Explain the risk when relevant.\n"
+
+	if !e.config.GetUserConfig().GetAllowSudo() {
+		prompt += "- Do NOT use sudo in commands. If elevated privileges are needed, inform the user.\n"
+	} else {
+		prompt += "- You may use sudo when commands require elevated privileges.\n"
+	}
+
+	return prompt
+}
+
+func (e *Engine) AgentCompletion(input string, autoExecute bool) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	e.cancelFn = cancel
+	defer func() { e.cancelFn = nil }()
+
+	e.running = true
+	e.appendUserMessage(input)
+
+	const maxIterations = 50
+
+	for i := 0; i < maxIterations; i++ {
+		if !e.running {
+			return nil
+		}
+
+		req := CompletionRequest{
+			Model:       e.config.GetAiConfig().GetModel(),
+			MaxTokens:   e.config.GetAiConfig().GetMaxTokens(),
+			Temperature: e.config.GetAiConfig().GetTemperature(),
+			Messages:    e.prepareCompletionMessages(),
+			Tools:       AgentTools(),
+		}
+
+		resp, err := e.provider.CompleteWithTools(ctx, req)
+		if err != nil {
+			e.running = false
+			e.agentChannel <- AgentEvent{Type: AgentEventError, Error: err}
+			e.agentChannel <- AgentEvent{Type: AgentEventDone}
+			return err
+		}
+
+		if len(resp.ToolCalls) == 0 {
+			e.appendAgentMessage(resp)
+			e.agentChannel <- AgentEvent{Type: AgentEventAnswer, Content: resp.Content}
+			e.agentChannel <- AgentEvent{Type: AgentEventDone}
+			e.running = false
+			return nil
+		}
+
+		if resp.Content != "" {
+			e.agentChannel <- AgentEvent{Type: AgentEventThinking, Content: resp.Content}
+		}
+
+		e.appendAgentMessage(resp)
+
+		for _, tc := range resp.ToolCalls {
+			if !e.running {
+				return nil
+			}
+
+			e.agentChannel <- AgentEvent{Type: AgentEventToolCall, ToolCall: &tc}
+
+			if !autoExecute {
+				e.agentChannel <- AgentEvent{Type: AgentEventApprovalRequired, ToolCall: &tc}
+				approved := <-e.approvalChan
+				if !approved {
+					result := ToolResult{
+						ToolCallID: tc.ID,
+						Content:    "The user declined to execute this tool call.",
+					}
+					e.appendAgentMessage(Message{
+						Role:       "tool",
+						Content:    result.Content,
+						ToolCallID: result.ToolCallID,
+					})
+					e.agentChannel <- AgentEvent{Type: AgentEventToolResult, ToolResult: &result}
+					continue
+				}
+			}
+
+			result := e.toolExecutor.Execute(tc)
+			e.appendAgentMessage(Message{
+				Role:       "tool",
+				Content:    result.Content,
+				ToolCallID: result.ToolCallID,
+			})
+			e.agentChannel <- AgentEvent{Type: AgentEventToolResult, ToolResult: &result}
+		}
+	}
+
+	e.running = false
+	e.agentChannel <- AgentEvent{
+		Type:    AgentEventAnswer,
+		Content: "Reached the maximum number of iterations. Please provide further instructions if the task is not complete.",
+	}
+	e.agentChannel <- AgentEvent{Type: AgentEventDone}
+	return nil
 }
 
 func (e *Engine) prepareSystemPromptContextPart() string {

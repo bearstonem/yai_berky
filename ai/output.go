@@ -1,5 +1,25 @@
 package ai
 
+type AgentEventType int
+
+const (
+	AgentEventThinking AgentEventType = iota
+	AgentEventToolCall
+	AgentEventToolResult
+	AgentEventAnswer
+	AgentEventError
+	AgentEventDone
+	AgentEventApprovalRequired
+)
+
+type AgentEvent struct {
+	Type       AgentEventType
+	Content    string
+	ToolCall   *ToolCall
+	ToolResult *ToolResult
+	Error      error
+}
+
 type EngineExecOutput struct {
 	Command     string `json:"cmd"`
 	Explanation string `json:"exp"`

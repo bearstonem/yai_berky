@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -44,6 +45,9 @@ type UiState struct {
 	configProvider string
 	configKey      string
 	configBaseURL  string
+	// agent mode state
+	agentRunning         bool
+	agentApprovalPending bool
 }
 
 type UiDimensions struct {
@@ -150,8 +154,19 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// keyboard
 	case tea.KeyMsg:
 		switch msg.Type {
-		// quit
+		// quit / interrupt
 		case tea.KeyCtrlC:
+			if u.state.agentRunning {
+				u.engine.Interrupt()
+				u.state.agentRunning = false
+				u.state.agentApprovalPending = false
+				u.state.querying = false
+				u.components.prompt.Focus()
+				return u, tea.Sequence(
+					tea.Println(u.components.renderer.RenderWarning("\n[agent interrupted]\n")),
+					textinput.Blink,
+				)
+			}
 			return u, tea.Quit
 		// history
 		case tea.KeyUp, tea.KeyDown:
@@ -170,15 +185,20 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		// switch mode
 		case tea.KeyTab:
-			if !u.state.querying && !u.state.confirming && !u.state.configuring {
-				if u.state.promptMode == ChatPromptMode {
-					u.state.promptMode = ExecPromptMode
-					u.components.prompt.SetMode(ExecPromptMode)
-					u.engine.SetMode(ai.ExecEngineMode)
-				} else {
+			if !u.state.querying && !u.state.confirming && !u.state.configuring && !u.state.agentRunning {
+				switch u.state.promptMode {
+				case ExecPromptMode:
 					u.state.promptMode = ChatPromptMode
 					u.components.prompt.SetMode(ChatPromptMode)
 					u.engine.SetMode(ai.ChatEngineMode)
+				case ChatPromptMode:
+					u.state.promptMode = AgentPromptMode
+					u.components.prompt.SetMode(AgentPromptMode)
+					u.engine.SetMode(ai.AgentEngineMode)
+				default:
+					u.state.promptMode = ExecPromptMode
+					u.components.prompt.SetMode(ExecPromptMode)
+					u.engine.SetMode(ai.ExecEngineMode)
 				}
 				u.engine.Reset()
 				u.components.prompt, promptCmd = u.components.prompt.Update(msg)
@@ -189,7 +209,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if u.state.configuring {
 				return u, u.handleConfigInput(u.components.prompt.GetValue())
 			}
-			if !u.state.querying && !u.state.confirming {
+			if !u.state.querying && !u.state.confirming && !u.state.agentRunning {
 				input := u.components.prompt.GetValue()
 				if input != "" {
 					inputPrint := u.components.prompt.AsString()
@@ -197,7 +217,15 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					u.components.prompt.SetValue("")
 					u.components.prompt.Blur()
 					u.components.prompt, promptCmd = u.components.prompt.Update(msg)
-					if u.state.promptMode == ChatPromptMode {
+					if u.state.promptMode == AgentPromptMode {
+						cmds = append(
+							cmds,
+							promptCmd,
+							tea.Println(inputPrint),
+							u.startAgent(input),
+							u.awaitAgentEvent(),
+						)
+					} else if u.state.promptMode == ChatPromptMode {
 						cmds = append(
 							cmds,
 							promptCmd,
@@ -258,7 +286,20 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		default:
-			if u.state.confirming {
+			if u.state.agentApprovalPending {
+				if strings.ToLower(msg.String()) == "y" {
+					u.state.agentApprovalPending = false
+					u.engine.SendApproval(true)
+					return u, u.awaitAgentEvent()
+				} else {
+					u.state.agentApprovalPending = false
+					u.engine.SendApproval(false)
+					return u, tea.Sequence(
+						tea.Println(u.components.renderer.RenderWarning("  [skipped]")),
+						u.awaitAgentEvent(),
+					)
+				}
+			} else if u.state.confirming {
 				if strings.ToLower(msg.String()) == "y" {
 					u.state.confirming = false
 					u.state.executing = true
@@ -345,6 +386,61 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			return u, u.awaitChatStream()
 		}
+	// agent event feedback
+	case ai.AgentEvent:
+		switch msg.Type {
+		case ai.AgentEventThinking:
+			return u, tea.Sequence(
+				tea.Println(u.components.renderer.RenderAgentThinking(msg.Content)),
+				u.awaitAgentEvent(),
+			)
+		case ai.AgentEventToolCall:
+			tc := msg.ToolCall
+			output := u.components.renderer.RenderToolCall(tc.Name, tc.Arguments)
+			return u, tea.Sequence(
+				tea.Println(output),
+				u.awaitAgentEvent(),
+			)
+		case ai.AgentEventApprovalRequired:
+			u.state.agentApprovalPending = true
+			tc := msg.ToolCall
+			prompt := fmt.Sprintf("  Run %s? [y/N]", u.components.renderer.RenderContent(fmt.Sprintf("`%s`", formatToolCallSummary(tc))))
+			return u, tea.Println(prompt)
+		case ai.AgentEventToolResult:
+			tr := msg.ToolResult
+			exitCode := 0
+			if strings.Contains(tr.Content, "exit_code: ") {
+				fmt.Sscanf(tr.Content, "exit_code: %d", &exitCode)
+			}
+			output := u.components.renderer.RenderToolResult(tr.Content, exitCode)
+			return u, tea.Sequence(
+				tea.Println(output),
+				u.awaitAgentEvent(),
+			)
+		case ai.AgentEventAnswer:
+			output := u.components.renderer.RenderContent(msg.Content)
+			return u, tea.Sequence(
+				tea.Println(output),
+				u.awaitAgentEvent(),
+			)
+		case ai.AgentEventError:
+			errStr := "unknown error"
+			if msg.Error != nil {
+				errStr = msg.Error.Error()
+			}
+			return u, tea.Sequence(
+				tea.Println(u.components.renderer.RenderError(fmt.Sprintf("[agent error] %s", errStr))),
+				u.awaitAgentEvent(),
+			)
+		case ai.AgentEventDone:
+			u.state.agentRunning = false
+			u.state.querying = false
+			u.components.prompt.Focus()
+			if u.state.runMode == CliMode {
+				return u, tea.Quit
+			}
+			return u, textinput.Blink
+		}
 	// runner feedback
 	case run.RunOutput:
 		u.state.querying = false
@@ -388,8 +484,16 @@ func (u *Ui) View() string {
 		)
 	}
 
-	if !u.state.querying && !u.state.confirming && !u.state.executing {
+	if u.state.agentApprovalPending {
+		return ""
+	}
+
+	if !u.state.querying && !u.state.confirming && !u.state.executing && !u.state.agentRunning {
 		return u.components.prompt.View()
+	}
+
+	if u.state.agentRunning {
+		return u.components.spinner.View()
 	}
 
 	if u.state.promptMode == ChatPromptMode {
@@ -419,10 +523,7 @@ func (u *Ui) startRepl(cfg *config.Config) tea.Cmd {
 				u.state.promptMode = GetPromptModeFromString(cfg.GetUserConfig().GetDefaultPromptMode())
 			}
 
-			engineMode := ai.ExecEngineMode
-			if u.state.promptMode == ChatPromptMode {
-				engineMode = ai.ChatEngineMode
-			}
+			engineMode := promptModeToEngineMode(u.state.promptMode)
 
 			engine, err := ai.NewEngine(engineMode, cfg)
 			if err != nil {
@@ -452,10 +553,7 @@ func (u *Ui) startCli(cfg *config.Config) tea.Cmd {
 		u.state.promptMode = GetPromptModeFromString(cfg.GetUserConfig().GetDefaultPromptMode())
 	}
 
-	engineMode := ai.ExecEngineMode
-	if u.state.promptMode == ChatPromptMode {
-		engineMode = ai.ChatEngineMode
-	}
+	engineMode := promptModeToEngineMode(u.state.promptMode)
 
 	engine, err := ai.NewEngine(engineMode, cfg)
 	if err != nil {
@@ -473,7 +571,13 @@ func (u *Ui) startCli(cfg *config.Config) tea.Cmd {
 	u.state.buffer = ""
 	u.state.command = ""
 
-	if u.state.promptMode == ExecPromptMode {
+	switch u.state.promptMode {
+	case AgentPromptMode:
+		return tea.Batch(
+			u.startAgent(u.state.args),
+			u.awaitAgentEvent(),
+		)
+	case ExecPromptMode:
 		return tea.Batch(
 			u.components.spinner.Tick,
 			func() tea.Msg {
@@ -485,7 +589,7 @@ func (u *Ui) startCli(cfg *config.Config) tea.Cmd {
 				return *output
 			},
 		)
-	} else {
+	default:
 		return tea.Batch(
 			u.startChatStream(u.state.args),
 			u.awaitChatStream(),
@@ -644,10 +748,23 @@ func (u *Ui) finishConfig() tea.Cmd {
 			},
 		)
 	} else {
-		if u.state.promptMode == ExecPromptMode {
-			u.state.querying = true
-			u.state.configuring = false
-			u.state.buffer = ""
+		u.state.querying = true
+		u.state.configuring = false
+		u.state.buffer = ""
+		switch u.state.promptMode {
+		case AgentPromptMode:
+			return tea.Batch(
+				tea.Println(u.components.renderer.RenderSuccess("\n[settings ok]")),
+				u.startAgent(u.state.args),
+				u.awaitAgentEvent(),
+			)
+		case ChatPromptMode:
+			return tea.Batch(
+				tea.Println(u.components.renderer.RenderSuccess("\n[settings ok]")),
+				u.startChatStream(u.state.args),
+				u.awaitChatStream(),
+			)
+		default:
 			return tea.Sequence(
 				tea.Println(u.components.renderer.RenderSuccess("\n[settings ok]")),
 				u.components.spinner.Tick,
@@ -659,11 +776,6 @@ func (u *Ui) finishConfig() tea.Cmd {
 					}
 					return *output
 				},
-			)
-		} else {
-			return tea.Batch(
-				u.startChatStream(u.state.args),
-				u.awaitChatStream(),
 			)
 		}
 	}
@@ -711,6 +823,77 @@ func (u *Ui) awaitChatStream() tea.Cmd {
 
 		return output
 	}
+}
+
+func (u *Ui) startAgent(input string) tea.Cmd {
+	return func() tea.Msg {
+		u.state.querying = true
+		u.state.agentRunning = true
+		u.state.executing = false
+		u.state.confirming = false
+		u.state.buffer = ""
+		u.state.command = ""
+
+		autoExec := false
+		if u.config != nil {
+			autoExec = u.config.GetUserConfig().GetAgentAutoExecute()
+		}
+
+		err := u.engine.AgentCompletion(input, autoExec)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}
+}
+
+func (u *Ui) awaitAgentEvent() tea.Cmd {
+	return func() tea.Msg {
+		event := <-u.engine.GetAgentChannel()
+		return event
+	}
+}
+
+func promptModeToEngineMode(pm PromptMode) ai.EngineMode {
+	switch pm {
+	case ChatPromptMode:
+		return ai.ChatEngineMode
+	case AgentPromptMode:
+		return ai.AgentEngineMode
+	default:
+		return ai.ExecEngineMode
+	}
+}
+
+func formatToolCallSummary(tc *ai.ToolCall) string {
+	if tc == nil {
+		return ""
+	}
+	switch tc.Name {
+	case "run_command":
+		var args struct {
+			Command string `json:"command"`
+		}
+		if err := json.Unmarshal([]byte(tc.Arguments), &args); err == nil {
+			return args.Command
+		}
+	case "read_file", "list_directory":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(tc.Arguments), &args); err == nil {
+			return fmt.Sprintf("%s %s", tc.Name, args.Path)
+		}
+	case "write_file":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(tc.Arguments), &args); err == nil {
+			return fmt.Sprintf("write_file %s", args.Path)
+		}
+	}
+	return fmt.Sprintf("%s(%s)", tc.Name, tc.Arguments)
 }
 
 func (u *Ui) execCommand(input string) tea.Cmd {

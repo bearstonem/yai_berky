@@ -5,12 +5,16 @@ type EngineMode int
 const (
 	ExecEngineMode EngineMode = iota
 	ChatEngineMode
+	AgentEngineMode
 )
 
 func (m EngineMode) String() string {
-	if m == ExecEngineMode {
+	switch m {
+	case ExecEngineMode:
 		return "exec"
-	} else {
+	case AgentEngineMode:
+		return "agent"
+	default:
 		return "chat"
 	}
 }

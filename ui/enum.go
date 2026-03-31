@@ -6,6 +6,7 @@ const (
 	ExecPromptMode PromptMode = iota
 	ConfigPromptMode
 	ChatPromptMode
+	AgentPromptMode
 	DefaultPromptMode
 )
 
@@ -17,6 +18,8 @@ func (m PromptMode) String() string {
 		return "config"
 	case ChatPromptMode:
 		return "chat"
+	case AgentPromptMode:
+		return "agent"
 	default:
 		return "default"
 	}
@@ -30,6 +33,8 @@ func GetPromptModeFromString(s string) PromptMode {
 		return ConfigPromptMode
 	case "chat":
 		return ChatPromptMode
+	case "agent":
+		return AgentPromptMode
 	default:
 		return DefaultPromptMode
 	}
