@@ -72,11 +72,26 @@ else
         if [[ -f "$RC_FILE" ]] && grep -qF "$INSTALL_DIR" "$RC_FILE" 2>/dev/null; then
             ok "PATH entry already exists in $RC_FILE"
         else
-            echo "" >> "$RC_FILE"
-            echo "# Added by yai installer" >> "$RC_FILE"
-            echo "$LINE" >> "$RC_FILE"
-            ok "Added $INSTALL_DIR to PATH in $RC_FILE"
-            warn "Run: source $RC_FILE  (or restart your terminal)"
+            # Avoid failing the install if the user's RC file isn't writable
+            can_write=false
+            if [[ -e "$RC_FILE" ]]; then
+                [[ -w "$RC_FILE" ]] && can_write=true
+            else
+                [[ -w "$(dirname "$RC_FILE")" ]] && can_write=true
+            fi
+
+            if [[ "$can_write" == true ]]; then
+                {
+                    echo ""
+                    echo "# Added by yai installer"
+                    echo "$LINE"
+                } >> "$RC_FILE"
+                ok "Added $INSTALL_DIR to PATH in $RC_FILE"
+                warn "Run: source $RC_FILE  (or restart your terminal)"
+            else
+                warn "Could not write to $RC_FILE. Add this to your shell config manually:"
+                echo "    $LINE"
+            fi
         fi
     else
         warn "Could not detect shell RC file. Add this to your shell config manually:"

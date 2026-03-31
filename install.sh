@@ -1,4 +1,16 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+output() {
+  # output "message" ["error"]
+  local msg="${1:-}"
+  local level="${2:-info}"
+  if [[ "$level" == "error" ]]; then
+    echo "$msg" >&2
+  else
+    echo "$msg"
+  fi
+}
 
 REPOOWNER="ekkinox"
 REPONAME="yai"
@@ -29,7 +41,7 @@ case ${MACHINE} in
     i[36]86)
         MACHINE="386"
         if [ "darwin" = "${KERNEL}" ]; then
-            output "  [ ] Your architecture (${MACHINE}) is not supported anymore" "error"
+            output "Your architecture (${MACHINE}) is not supported on macOS" "error"
             exit 1
         fi
         ;;
@@ -37,7 +49,7 @@ case ${MACHINE} in
         MACHINE="amd64"
         ;;
     *)
-        output "  [ ] Your architecture (${MACHINE}) is not currently supported" "error"
+        output "Your architecture (${MACHINE}) is not currently supported" "error"
         exit 1
         ;;
 esac
