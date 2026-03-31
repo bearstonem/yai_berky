@@ -58,10 +58,14 @@ var writeFileSchema = json.RawMessage(`{
 		},
 		"content": {
 			"type": "string",
-			"description": "Content to write to the file"
+			"description": "Content to write to the file (plain text). Prefer content_base64 for large/multiline code to avoid JSON escaping issues."
+		},
+		"content_base64": {
+			"type": "string",
+			"description": "Base64-encoded content to write. Use this for large or complex multiline content."
 		}
 	},
-	"required": ["path", "content"]
+	"required": ["path"]
 }`)
 
 func AgentTools() []Tool {
@@ -273,16 +277,29 @@ func (te *ToolExecutor) executeListDirectory(argsJSON string) string {
 
 func (te *ToolExecutor) executeWriteFile(argsJSON string) string {
 	var args struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
+		Path          string `json:"path"`
+		Content       string `json:"content"`
+		ContentBase64 string `json:"content_base64"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return fmt.Sprintf("error parsing arguments: %s", err)
 	}
 
+	content := args.Content
+	if args.ContentBase64 != "" {
+		decoded, err := base64.StdEncoding.DecodeString(args.ContentBase64)
+		if err != nil {
+			return fmt.Sprintf("error decoding content_base64: %s", err)
+		}
+		content = string(decoded)
+	}
+	if content == "" {
+		return "error: missing content. Provide either content or content_base64."
+	}
+
 	if te.IsRemote() {
 		dir := filepath.Dir(args.Path)
-		encoded := base64.StdEncoding.EncodeToString([]byte(args.Content))
+		encoded := base64.StdEncoding.EncodeToString([]byte(content))
 		remoteCmd := fmt.Sprintf("mkdir -p %s && base64 -d > %s", shellQuote(dir), shellQuote(args.Path))
 		stdin := strings.NewReader(encoded)
 		output, err := run.CaptureSSHCommandWithStdin(te.remoteHost, remoteCmd, stdin, 30*time.Second)
@@ -292,7 +309,7 @@ func (te *ToolExecutor) executeWriteFile(argsJSON string) string {
 		if output.ExitCode != 0 {
 			return fmt.Sprintf("error writing file: %s", output.Stderr)
 		}
-		return fmt.Sprintf("successfully wrote %d bytes to %s (remote)", len(args.Content), args.Path)
+		return fmt.Sprintf("successfully wrote %d bytes to %s (remote)", len(content), args.Path)
 	}
 
 	dir := filepath.Dir(args.Path)
@@ -300,11 +317,11 @@ func (te *ToolExecutor) executeWriteFile(argsJSON string) string {
 		return fmt.Sprintf("error creating directory %s: %s", dir, err)
 	}
 
-	if err := os.WriteFile(args.Path, []byte(args.Content), 0644); err != nil {
+	if err := os.WriteFile(args.Path, []byte(content), 0644); err != nil {
 		return fmt.Sprintf("error writing file: %s", err)
 	}
 
-	return fmt.Sprintf("successfully wrote %d bytes to %s", len(args.Content), args.Path)
+	return fmt.Sprintf("successfully wrote %d bytes to %s", len(content), args.Path)
 }
 
 func formatCapturedOutput(output *run.CapturedOutput) string {

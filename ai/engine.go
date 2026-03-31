@@ -476,6 +476,7 @@ func (e *Engine) prepareSystemPromptAgentPart() string {
 		"- Prefer small, incremental commands so you can observe results and adjust.\n" +
 		"- If a command fails, read the error output and try a different approach.\n" +
 		"- When calling run_command, you can optionally set working_directory to control where the command runs.\n" +
+		"- When calling write_file with large or multiline code, prefer content_base64 to avoid JSON escaping issues.\n" +
 		"- Always explain your reasoning briefly before using a tool.\n" +
 		"- When the task is complete, respond with a text summary (no tool calls).\n" +
 		"- Be careful with destructive operations (rm -rf, overwriting files). Explain the risk when relevant.\n"
