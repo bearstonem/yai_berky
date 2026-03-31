@@ -68,7 +68,8 @@ The configuration file lives at `~/.config/yai.json`. You can edit it directly o
   "AI_TEMPERATURE": 0.2,
   "AI_MAX_TOKENS": 2000,
   "USER_DEFAULT_PROMPT_MODE": "exec",
-  "USER_PREFERENCES": ""
+  "USER_PREFERENCES": "",
+  "USER_ALLOW_SUDO": false
 }
 ```
 
@@ -83,8 +84,18 @@ The configuration file lives at `~/.config/yai.json`. You can edit it directly o
 | `AI_MAX_TOKENS` | Maximum tokens in the response |
 | `USER_DEFAULT_PROMPT_MODE` | Default mode: `exec` or `chat` |
 | `USER_PREFERENCES` | Free-text preferences appended to the system prompt |
+| `USER_ALLOW_SUDO` | Allow commands with `sudo` (default `false`) |
 
 Existing configs using the legacy `OPENAI_*` keys continue to work and are read as fallback values.
+
+### Sudo Support
+
+By default, Yai will not generate commands that use `sudo`. To enable elevated-privilege commands, set `USER_ALLOW_SUDO` to `true` in your config (`ctrl+s` inside Yai).
+
+When enabled:
+- The AI will use `sudo` when a task requires root access (installing packages, managing services, editing system files, etc.)
+- A `[sudo]` warning is shown before the confirmation prompt so you always know before executing
+- Sudo credentials are validated upfront via `sudo -v` before the actual command runs
 
 ## Thanks
 
