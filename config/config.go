@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/sashabaranov/go-openai"
-
 	"github.com/ekkinox/yai/system"
 	"github.com/spf13/viper"
 )
@@ -38,13 +36,55 @@ func NewConfig() (*Config, error) {
 		return nil, err
 	}
 
+	provider := viper.GetString(ai_provider)
+	key := viper.GetString(ai_api_key)
+	model := viper.GetString(ai_model)
+	baseURL := viper.GetString(ai_base_url)
+	proxy := viper.GetString(ai_proxy)
+	temperature := viper.GetFloat64(ai_temperature)
+	maxTokens := viper.GetInt(ai_max_tokens)
+
+	// Backward compatibility: fall back to legacy OPENAI_* keys
+	if provider == "" {
+		provider = ProviderOpenAI
+	}
+	if key == "" {
+		key = viper.GetString(openai_key)
+	}
+	if model == "" {
+		model = viper.GetString(openai_model)
+	}
+	if proxy == "" {
+		proxy = viper.GetString(openai_proxy)
+	}
+	if temperature == 0 {
+		legacyTemp := viper.GetFloat64(openai_temperature)
+		if legacyTemp != 0 {
+			temperature = legacyTemp
+		}
+	}
+	if maxTokens == 0 {
+		legacyTokens := viper.GetInt(openai_max_tokens)
+		if legacyTokens != 0 {
+			maxTokens = legacyTokens
+		}
+	}
+
+	if model == "" {
+		if defaultModel, ok := ProviderDefaultModels[provider]; ok {
+			model = defaultModel
+		}
+	}
+
 	return &Config{
 		ai: AiConfig{
-			key:         viper.GetString(openai_key),
-			model:       viper.GetString(openai_model),
-			proxy:       viper.GetString(openai_proxy),
-			temperature: viper.GetFloat64(openai_temperature),
-			maxTokens:   viper.GetInt(openai_max_tokens),
+			provider:    provider,
+			key:         key,
+			model:       model,
+			baseURL:     baseURL,
+			proxy:       proxy,
+			temperature: temperature,
+			maxTokens:   maxTokens,
 		},
 		user: UserConfig{
 			defaultPromptMode: viper.GetString(user_default_prompt_mode),
@@ -54,22 +94,35 @@ func NewConfig() (*Config, error) {
 	}, nil
 }
 
-func WriteConfig(key string, write bool) (*Config, error) {
-	system := system.Analyse()
+func WriteConfig(provider, key, model, baseURL string, write bool) (*Config, error) {
+	sys := system.Analyse()
 
-	// ai defaults
-	viper.Set(openai_key, key)
-	viper.Set(openai_model, openai.GPT3Dot5Turbo)
-	viper.SetDefault(openai_proxy, "")
-	viper.SetDefault(openai_temperature, 0.2)
-	viper.SetDefault(openai_max_tokens, 1000)
+	viper.Set(ai_provider, provider)
+	viper.Set(ai_api_key, key)
 
-	// user defaults
+	if model == "" {
+		if defaultModel, ok := ProviderDefaultModels[provider]; ok {
+			model = defaultModel
+		}
+	}
+	viper.Set(ai_model, model)
+
+	if baseURL == "" {
+		if defaultURL, ok := ProviderBaseURLs[provider]; ok {
+			baseURL = defaultURL
+		}
+	}
+	viper.Set(ai_base_url, baseURL)
+
+	viper.SetDefault(ai_proxy, "")
+	viper.SetDefault(ai_temperature, 0.2)
+	viper.SetDefault(ai_max_tokens, 2000)
+
 	viper.SetDefault(user_default_prompt_mode, "exec")
 	viper.SetDefault(user_preferences, "")
 
 	if write {
-		err := viper.SafeWriteConfigAs(system.GetConfigFile())
+		err := viper.SafeWriteConfigAs(sys.GetConfigFile())
 		if err != nil {
 			return nil, err
 		}

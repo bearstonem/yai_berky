@@ -12,7 +12,7 @@ const (
 	exec_icon          = "🚀 > "
 	exec_placeholder   = "Execute something..."
 	config_icon        = "🔒 > "
-	config_placeholder = "Enter your OpenAI key..."
+	config_placeholder = "Enter your API key..."
 	chat_icon          = "💬 > "
 	chat_placeholder   = "Ask me something..."
 )
@@ -51,12 +51,27 @@ func (p *Prompt) SetMode(mode PromptMode) *Prompt {
 	p.input.Prompt = getPromptIcon(mode)
 	p.input.Placeholder = getPromptPlaceholder(mode)
 
+	if mode == ConfigPromptMode {
+		p.input.EchoMode = textinput.EchoPassword
+	} else {
+		p.input.EchoMode = textinput.EchoNormal
+	}
+
+	return p
+}
+
+func (p *Prompt) SetPlaceholder(text string) *Prompt {
+	p.input.Placeholder = text
+	return p
+}
+
+func (p *Prompt) SetEchoMode(mode textinput.EchoMode) *Prompt {
+	p.input.EchoMode = mode
 	return p
 }
 
 func (p *Prompt) SetValue(value string) *Prompt {
 	p.input.SetValue(value)
-
 	return p
 }
 
@@ -66,20 +81,17 @@ func (p *Prompt) GetValue() string {
 
 func (p *Prompt) Blur() *Prompt {
 	p.input.Blur()
-
 	return p
 }
 
 func (p *Prompt) Focus() *Prompt {
 	p.input.Focus()
-
 	return p
 }
 
 func (p *Prompt) Update(msg tea.Msg) (*Prompt, tea.Cmd) {
 	var updateCmd tea.Cmd
 	p.input, updateCmd = p.input.Update(msg)
-
 	return p, updateCmd
 }
 
@@ -89,7 +101,6 @@ func (p *Prompt) View() string {
 
 func (p *Prompt) AsString() string {
 	style := getPromptStyle(p.mode)
-
 	return fmt.Sprintf("%s%s", style.Render(getPromptIcon(p.mode)), style.Render(p.input.Value()))
 }
 

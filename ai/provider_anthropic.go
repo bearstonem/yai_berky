@@ -1,0 +1,288 @@
+package ai
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+)
+
+const (
+	anthropicAPIURL     = "https://api.anthropic.com/v1/messages"
+	anthropicAPIVersion = "2023-06-01"
+)
+
+type AnthropicProvider struct {
+	apiKey string
+	client *http.Client
+}
+
+func NewAnthropicProvider(apiKey string) *AnthropicProvider {
+	return &AnthropicProvider{
+		apiKey: apiKey,
+		client: &http.Client{},
+	}
+}
+
+func (p *AnthropicProvider) Name() string {
+	return "anthropic"
+}
+
+type anthropicMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type anthropicRequest struct {
+	Model     string             `json:"model"`
+	MaxTokens int                `json:"max_tokens"`
+	System    string             `json:"system,omitempty"`
+	Messages  []anthropicMessage `json:"messages"`
+	Stream    bool               `json:"stream,omitempty"`
+}
+
+type anthropicResponse struct {
+	Content []struct {
+		Text string `json:"text"`
+	} `json:"content"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
+func (p *AnthropicProvider) buildRequest(req CompletionRequest) (string, []anthropicMessage) {
+	var system string
+	msgs := make([]anthropicMessage, 0, len(req.Messages))
+
+	for _, m := range req.Messages {
+		if m.Role == "system" {
+			system = m.Content
+			continue
+		}
+		msgs = append(msgs, anthropicMessage{
+			Role:    m.Role,
+			Content: m.Content,
+		})
+	}
+
+	if len(msgs) == 0 {
+		msgs = append(msgs, anthropicMessage{Role: "user", Content: "Hello"})
+	}
+
+	return system, msgs
+}
+
+func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest) (string, error) {
+	system, msgs := p.buildRequest(req)
+
+	maxTokens := req.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 1024
+	}
+
+	body := anthropicRequest{
+		Model:     req.Model,
+		MaxTokens: maxTokens,
+		System:    system,
+		Messages:  msgs,
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return "", err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", anthropicAPIURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		return "", err
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-api-key", p.apiKey)
+	httpReq.Header.Set("anthropic-version", anthropicAPIVersion)
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("anthropic API error (HTTP %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result anthropicResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", err
+	}
+
+	if result.Error != nil {
+		return "", fmt.Errorf("anthropic API error: %s", result.Error.Message)
+	}
+
+	if len(result.Content) == 0 {
+		return "", fmt.Errorf("no content in anthropic response")
+	}
+
+	return result.Content[0].Text, nil
+}
+
+func (p *AnthropicProvider) StreamComplete(ctx context.Context, req CompletionRequest, ch chan<- StreamChunk) {
+	system, msgs := p.buildRequest(req)
+
+	maxTokens := req.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 1024
+	}
+
+	body := anthropicRequest{
+		Model:     req.Model,
+		MaxTokens: maxTokens,
+		System:    system,
+		Messages:  msgs,
+		Stream:    true,
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		ch <- StreamChunk{Err: err, Done: true}
+		return
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", anthropicAPIURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		ch <- StreamChunk{Err: err, Done: true}
+		return
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-api-key", p.apiKey)
+	httpReq.Header.Set("anthropic-version", anthropicAPIVersion)
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		ch <- StreamChunk{Err: err, Done: true}
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		ch <- StreamChunk{
+			Err:  fmt.Errorf("anthropic API error (HTTP %d): %s", resp.StatusCode, string(respBody)),
+			Done: true,
+		}
+		return
+	}
+
+	scanner := newSSEScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		data := strings.TrimPrefix(line, "data: ")
+
+		if data == "[DONE]" {
+			ch <- StreamChunk{Done: true}
+			return
+		}
+
+		var event struct {
+			Type  string `json:"type"`
+			Delta *struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"delta,omitempty"`
+		}
+
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			continue
+		}
+
+		switch event.Type {
+		case "content_block_delta":
+			if event.Delta != nil && event.Delta.Text != "" {
+				ch <- StreamChunk{Content: event.Delta.Text}
+			}
+		case "message_stop":
+			ch <- StreamChunk{Done: true}
+			return
+		case "error":
+			ch <- StreamChunk{
+				Err:  fmt.Errorf("anthropic stream error: %s", data),
+				Done: true,
+			}
+			return
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		ch <- StreamChunk{Err: err, Done: true}
+		return
+	}
+
+	ch <- StreamChunk{Done: true}
+}
+
+type sseScanner struct {
+	reader *strings.Reader
+	buf    *bytes.Buffer
+	rawBuf []byte
+	r      io.Reader
+	line   string
+	err    error
+}
+
+func newSSEScanner(r io.Reader) *sseScanner {
+	return &sseScanner{
+		r:      r,
+		rawBuf: make([]byte, 4096),
+		buf:    &bytes.Buffer{},
+	}
+}
+
+func (s *sseScanner) Scan() bool {
+	for {
+		if idx := bytes.IndexByte(s.buf.Bytes(), '\n'); idx >= 0 {
+			line := string(s.buf.Next(idx))
+			s.buf.ReadByte() // consume newline
+			s.line = strings.TrimRight(line, "\r")
+			return true
+		}
+
+		n, err := s.r.Read(s.rawBuf)
+		if n > 0 {
+			s.buf.Write(s.rawBuf[:n])
+		}
+		if err != nil {
+			if s.buf.Len() > 0 {
+				s.line = strings.TrimRight(s.buf.String(), "\r\n")
+				s.buf.Reset()
+				return true
+			}
+			if err != io.EOF {
+				s.err = err
+			}
+			return false
+		}
+	}
+}
+
+func (s *sseScanner) Text() string {
+	return s.line
+}
+
+func (s *sseScanner) Err() error {
+	return s.err
+}

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/ekkinox/yai/ai"
@@ -16,6 +17,15 @@ import (
 	"github.com/spf13/viper"
 )
 
+type configStep int
+
+const (
+	configStepProvider configStep = iota
+	configStepAPIKey
+	configStepBaseURL
+	configStepDone
+)
+
 type UiState struct {
 	error       error
 	runMode     RunMode
@@ -28,6 +38,11 @@ type UiState struct {
 	pipe        string
 	buffer      string
 	command     string
+	// multi-step config wizard state
+	configStep     configStep
+	configProvider string
+	configKey      string
+	configBaseURL  string
 }
 
 type UiDimensions struct {
@@ -64,6 +79,7 @@ func NewUi(input *UiInput) *Ui {
 			pipe:        input.GetPipe(),
 			buffer:      "",
 			command:     "",
+			configStep:  configStepProvider,
 		},
 		dimensions: UiDimensions{
 			150,
@@ -120,10 +136,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinner.TickMsg:
 		if u.state.querying {
 			u.components.spinner, spinnerCmd = u.components.spinner.Update(msg)
-			cmds = append(
-				cmds,
-				spinnerCmd,
-			)
+			cmds = append(cmds, spinnerCmd)
 		}
 	// size
 	case tea.WindowSizeMsg:
@@ -141,7 +154,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return u, tea.Quit
 		// history
 		case tea.KeyUp, tea.KeyDown:
-			if !u.state.querying && !u.state.confirming {
+			if !u.state.querying && !u.state.confirming && !u.state.configuring {
 				var input *string
 				if msg.Type == tea.KeyUp {
 					input = u.history.GetPrevious()
@@ -151,15 +164,12 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if input != nil {
 					u.components.prompt.SetValue(*input)
 					u.components.prompt, promptCmd = u.components.prompt.Update(msg)
-					cmds = append(
-						cmds,
-						promptCmd,
-					)
+					cmds = append(cmds, promptCmd)
 				}
 			}
 		// switch mode
 		case tea.KeyTab:
-			if !u.state.querying && !u.state.confirming {
+			if !u.state.querying && !u.state.confirming && !u.state.configuring {
 				if u.state.promptMode == ChatPromptMode {
 					u.state.promptMode = ExecPromptMode
 					u.components.prompt.SetMode(ExecPromptMode)
@@ -171,16 +181,12 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				u.engine.Reset()
 				u.components.prompt, promptCmd = u.components.prompt.Update(msg)
-				cmds = append(
-					cmds,
-					promptCmd,
-					textinput.Blink,
-				)
+				cmds = append(cmds, promptCmd, textinput.Blink)
 			}
 		// enter
 		case tea.KeyEnter:
 			if u.state.configuring {
-				return u, u.finishConfig(u.components.prompt.GetValue())
+				return u, u.handleConfigInput(u.components.prompt.GetValue())
 			}
 			if !u.state.querying && !u.state.confirming {
 				input := u.components.prompt.GetValue()
@@ -226,12 +232,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlL:
 			if !u.state.querying && !u.state.confirming {
 				u.components.prompt, promptCmd = u.components.prompt.Update(msg)
-				cmds = append(
-					cmds,
-					promptCmd,
-					tea.ClearScreen,
-					textinput.Blink,
-				)
+				cmds = append(cmds, promptCmd, tea.ClearScreen, textinput.Blink)
 			}
 
 		// reset
@@ -241,12 +242,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				u.engine.Reset()
 				u.components.prompt.SetValue("")
 				u.components.prompt, promptCmd = u.components.prompt.Update(msg)
-				cmds = append(
-					cmds,
-					promptCmd,
-					tea.ClearScreen,
-					textinput.Blink,
-				)
+				cmds = append(cmds, promptCmd, tea.ClearScreen, textinput.Blink)
 			}
 
 		// edit settings
@@ -257,11 +253,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				u.state.command = ""
 				u.components.prompt.Blur()
 				u.components.prompt, promptCmd = u.components.prompt.Update(msg)
-				cmds = append(
-					cmds,
-					promptCmd,
-					u.editSettings(),
-				)
+				cmds = append(cmds, promptCmd, u.editSettings())
 			}
 
 		default:
@@ -301,11 +293,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				u.components.prompt.Focus()
 				u.components.prompt, promptCmd = u.components.prompt.Update(msg)
-				cmds = append(
-					cmds,
-					promptCmd,
-					textinput.Blink,
-				)
+				cmds = append(cmds, promptCmd, textinput.Blink)
 			}
 		}
 	// engine exec feedback
@@ -415,16 +403,16 @@ func (u *Ui) View() string {
 	return ""
 }
 
-func (u *Ui) startRepl(config *config.Config) tea.Cmd {
+func (u *Ui) startRepl(cfg *config.Config) tea.Cmd {
 	return tea.Sequence(
 		tea.ClearScreen,
 		tea.Println(u.components.renderer.RenderContent(u.components.renderer.RenderHelpMessage())),
 		textinput.Blink,
 		func() tea.Msg {
-			u.config = config
+			u.config = cfg
 
 			if u.state.promptMode == DefaultPromptMode {
-				u.state.promptMode = GetPromptModeFromString(config.GetUserConfig().GetDefaultPromptMode())
+				u.state.promptMode = GetPromptModeFromString(cfg.GetUserConfig().GetDefaultPromptMode())
 			}
 
 			engineMode := ai.ExecEngineMode
@@ -432,7 +420,7 @@ func (u *Ui) startRepl(config *config.Config) tea.Cmd {
 				engineMode = ai.ChatEngineMode
 			}
 
-			engine, err := ai.NewEngine(engineMode, config)
+			engine, err := ai.NewEngine(engineMode, cfg)
 			if err != nil {
 				return err
 			}
@@ -442,7 +430,9 @@ func (u *Ui) startRepl(config *config.Config) tea.Cmd {
 			}
 
 			u.engine = engine
-			u.state.buffer = "Welcome \n\n"
+
+			providerInfo := u.components.renderer.RenderProviderInfo(cfg.GetAiConfig())
+			u.state.buffer = fmt.Sprintf("%s\n\n", providerInfo)
 			u.state.command = ""
 			u.components.prompt = NewPrompt(u.state.promptMode)
 
@@ -451,11 +441,11 @@ func (u *Ui) startRepl(config *config.Config) tea.Cmd {
 	)
 }
 
-func (u *Ui) startCli(config *config.Config) tea.Cmd {
-	u.config = config
+func (u *Ui) startCli(cfg *config.Config) tea.Cmd {
+	u.config = cfg
 
 	if u.state.promptMode == DefaultPromptMode {
-		u.state.promptMode = GetPromptModeFromString(config.GetUserConfig().GetDefaultPromptMode())
+		u.state.promptMode = GetPromptModeFromString(cfg.GetUserConfig().GetDefaultPromptMode())
 	}
 
 	engineMode := ai.ExecEngineMode
@@ -463,7 +453,7 @@ func (u *Ui) startCli(config *config.Config) tea.Cmd {
 		engineMode = ai.ChatEngineMode
 	}
 
-	engine, err := ai.NewEngine(engineMode, config)
+	engine, err := ai.NewEngine(engineMode, cfg)
 	if err != nil {
 		u.state.error = err
 		return nil
@@ -488,7 +478,6 @@ func (u *Ui) startCli(config *config.Config) tea.Cmd {
 				if err != nil {
 					return err
 				}
-
 				return *output
 			},
 		)
@@ -506,26 +495,124 @@ func (u *Ui) startConfig() tea.Cmd {
 		u.state.querying = false
 		u.state.confirming = false
 		u.state.executing = false
+		u.state.configStep = configStepProvider
 
 		u.state.buffer = u.components.renderer.RenderConfigMessage()
 		u.state.command = ""
 		u.components.prompt = NewPrompt(ConfigPromptMode)
+		u.components.prompt.SetEchoMode(textinput.EchoNormal)
+		u.components.prompt.SetPlaceholder("Enter provider number (1-8)...")
 
 		return nil
 	}
 }
 
-func (u *Ui) finishConfig(key string) tea.Cmd {
-	u.state.configuring = false
+func (u *Ui) handleConfigInput(input string) tea.Cmd {
+	input = strings.TrimSpace(input)
 
-	config, err := config.WriteConfig(key, true)
+	switch u.state.configStep {
+	case configStepProvider:
+		return u.handleProviderSelection(input)
+	case configStepAPIKey:
+		return u.handleAPIKeyInput(input)
+	case configStepBaseURL:
+		return u.handleBaseURLInput(input)
+	default:
+		return nil
+	}
+}
+
+func (u *Ui) handleProviderSelection(input string) tea.Cmd {
+	providers := config.ProviderList()
+	num, err := strconv.Atoi(input)
+	if err != nil || num < 1 || num > len(providers) {
+		return func() tea.Msg {
+			u.state.buffer = u.components.renderer.RenderConfigMessage()
+			u.state.buffer += u.components.renderer.RenderError(
+				fmt.Sprintf("\nInvalid selection. Please enter a number between 1 and %d.\n", len(providers)),
+			)
+			u.components.prompt.SetValue("")
+			return nil
+		}
+	}
+
+	u.state.configProvider = providers[num-1]
+	u.components.prompt.SetValue("")
+
+	if config.ProviderNeedsAPIKey(u.state.configProvider) {
+		u.state.configStep = configStepAPIKey
+		return func() tea.Msg {
+			u.state.buffer = u.components.renderer.RenderAPIKeyMessage(u.state.configProvider)
+			u.components.prompt.SetEchoMode(textinput.EchoPassword)
+			u.components.prompt.SetPlaceholder("Enter your API key...")
+			return nil
+		}
+	}
+
+	if u.state.configProvider == config.ProviderCustom {
+		u.state.configStep = configStepBaseURL
+		return func() tea.Msg {
+			u.state.buffer = u.components.renderer.RenderBaseURLMessage(u.state.configProvider)
+			u.components.prompt.SetEchoMode(textinput.EchoNormal)
+			u.components.prompt.SetPlaceholder("https://your-server.com/v1")
+			return nil
+		}
+	}
+
+	u.state.configKey = ""
+	return u.finishConfig()
+}
+
+func (u *Ui) handleAPIKeyInput(input string) tea.Cmd {
+	if input == "" {
+		return func() tea.Msg {
+			u.state.buffer = u.components.renderer.RenderAPIKeyMessage(u.state.configProvider)
+			u.state.buffer += u.components.renderer.RenderError("\nAPI key cannot be empty.\n")
+			u.components.prompt.SetValue("")
+			return nil
+		}
+	}
+
+	u.state.configKey = input
+	u.components.prompt.SetValue("")
+
+	if u.state.configProvider == config.ProviderCustom {
+		u.state.configStep = configStepBaseURL
+		return func() tea.Msg {
+			u.state.buffer = u.components.renderer.RenderBaseURLMessage(u.state.configProvider)
+			u.components.prompt.SetEchoMode(textinput.EchoNormal)
+			u.components.prompt.SetPlaceholder("https://your-server.com/v1")
+			return nil
+		}
+	}
+
+	return u.finishConfig()
+}
+
+func (u *Ui) handleBaseURLInput(input string) tea.Cmd {
+	u.state.configBaseURL = input
+	u.components.prompt.SetValue("")
+	return u.finishConfig()
+}
+
+func (u *Ui) finishConfig() tea.Cmd {
+	u.state.configuring = false
+	u.state.configStep = configStepDone
+
+	cfg, err := config.WriteConfig(
+		u.state.configProvider,
+		u.state.configKey,
+		"",
+		u.state.configBaseURL,
+		true,
+	)
 	if err != nil {
 		u.state.error = err
 		return nil
 	}
 
-	u.config = config
-	engine, err := ai.NewEngine(ai.ExecEngineMode, config)
+	u.config = cfg
+	engine, err := ai.NewEngine(ai.ExecEngineMode, cfg)
 	if err != nil {
 		u.state.error = err
 		return nil
@@ -537,16 +624,18 @@ func (u *Ui) finishConfig(key string) tea.Cmd {
 
 	u.engine = engine
 
+	providerInfo := u.components.renderer.RenderProviderInfo(cfg.GetAiConfig())
+
 	if u.state.runMode == ReplMode {
 		return tea.Sequence(
 			tea.ClearScreen,
 			tea.Println(u.components.renderer.RenderSuccess("\n[settings ok]\n")),
+			tea.Println(u.components.renderer.RenderContent(providerInfo)),
 			textinput.Blink,
 			func() tea.Msg {
 				u.state.buffer = ""
 				u.state.command = ""
 				u.components.prompt = NewPrompt(ExecPromptMode)
-
 				return nil
 			},
 		)
@@ -564,7 +653,6 @@ func (u *Ui) finishConfig(key string) tea.Cmd {
 					if err != nil {
 						return err
 					}
-
 					return *output
 				},
 			)
@@ -655,13 +743,13 @@ func (u *Ui) editSettings() tea.Cmd {
 			return run.NewRunOutput(error, "[settings error]", "")
 		}
 
-		config, error := config.NewConfig()
+		cfg, error := config.NewConfig()
 		if error != nil {
 			return run.NewRunOutput(error, "[settings error]", "")
 		}
 
-		u.config = config
-		engine, error := ai.NewEngine(ai.ExecEngineMode, config)
+		u.config = cfg
+		engine, error := ai.NewEngine(ai.ExecEngineMode, cfg)
 		if u.state.pipe != "" {
 			engine.SetPipe(u.state.pipe)
 		}

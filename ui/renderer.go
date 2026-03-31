@@ -1,6 +1,11 @@
 package ui
 
 import (
+	"fmt"
+	"strings"
+
+	"github.com/ekkinox/yai/config"
+
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -45,7 +50,6 @@ func NewRenderer(options ...glamour.TermRendererOption) *Renderer {
 
 func (r *Renderer) RenderContent(in string) string {
 	out, _ := r.contentRenderer.Render(in)
-
 	return out
 }
 
@@ -67,10 +71,46 @@ func (r *Renderer) RenderHelp(in string) string {
 
 func (r *Renderer) RenderConfigMessage() string {
 	welcome := "Welcome! 👋  \n\n"
-	welcome += "I cannot find a configuration file, please enter an `OpenAI API key` "
-	welcome += "from https://platform.openai.com/account/api-keys so I can generate it for you."
+	welcome += "I cannot find a configuration file. Let's set one up.\n\n"
+	welcome += "**Choose a provider** (enter number):\n\n"
+
+	providers := config.ProviderList()
+	for i, p := range providers {
+		name := config.ProviderDisplayNames[p]
+		welcome += fmt.Sprintf("  `%d` - %s\n", i+1, name)
+	}
 
 	return welcome
+}
+
+func (r *Renderer) RenderAPIKeyMessage(provider string) string {
+	name := config.ProviderDisplayNames[provider]
+	needsKey := config.ProviderNeedsAPIKey(provider)
+
+	if !needsKey {
+		return fmt.Sprintf("**%s** selected (no API key needed).\n\n", name)
+	}
+
+	var urlHint string
+	switch provider {
+	case config.ProviderOpenAI:
+		urlHint = "Get one at https://platform.openai.com/api-keys"
+	case config.ProviderAnthropic:
+		urlHint = "Get one at https://console.anthropic.com/settings/keys"
+	case config.ProviderOpenRouter:
+		urlHint = "Get one at https://openrouter.ai/settings/keys"
+	case config.ProviderMiniMax:
+		urlHint = "Get one at https://platform.minimax.io/"
+	default:
+		urlHint = "Enter your API key"
+	}
+
+	return fmt.Sprintf("**%s** selected.\n\nPlease enter your API key. %s\n", name, urlHint)
+}
+
+func (r *Renderer) RenderBaseURLMessage(provider string) string {
+	return fmt.Sprintf("Enter base URL for **%s** (or press Enter to skip):\n",
+		config.ProviderDisplayNames[provider])
 }
 
 func (r *Renderer) RenderHelpMessage() string {
@@ -84,4 +124,20 @@ func (r *Renderer) RenderHelpMessage() string {
 	help += "- `ctrl+c`: exit or interrupt command execution\n"
 
 	return help
+}
+
+func (r *Renderer) RenderProviderInfo(cfg config.AiConfig) string {
+	name := config.ProviderDisplayNames[cfg.GetProvider()]
+	if name == "" {
+		name = cfg.GetProvider()
+	}
+
+	info := fmt.Sprintf("**Provider:** %s | **Model:** `%s`", name, cfg.GetModel())
+
+	baseURL := cfg.GetEffectiveBaseURL()
+	if baseURL != "" && !strings.HasPrefix(baseURL, "https://api.openai.com") {
+		info += fmt.Sprintf(" | **URL:** `%s`", baseURL)
+	}
+
+	return info
 }
