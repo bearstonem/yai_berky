@@ -158,6 +158,24 @@ func TestToolExecutorWriteFileBase64(t *testing.T) {
 	assert.Equal(t, "written content", string(data))
 }
 
+func TestToolExecutorWriteFileLines(t *testing.T) {
+	te := NewToolExecutor(false, "/tmp")
+
+	outFile := filepath.Join(t.TempDir(), "output_lines.txt")
+
+	tc := ToolCall{
+		ID:   "call_8c",
+		Name: "write_file",
+		Arguments: `{"path": "` + outFile + `", "content_lines": ["line 1", "line 2", "line 3"]}`,
+	}
+	result := te.Execute(tc)
+	assert.Contains(t, result.Content, "successfully wrote")
+
+	data, err := os.ReadFile(outFile)
+	require.NoError(t, err)
+	assert.Equal(t, "line 1\nline 2\nline 3", string(data))
+}
+
 func TestToolExecutorUnknownTool(t *testing.T) {
 	te := NewToolExecutor(false, "/tmp")
 

@@ -58,7 +58,12 @@ var writeFileSchema = json.RawMessage(`{
 		},
 		"content": {
 			"type": "string",
-			"description": "Content to write to the file (plain text). Prefer content_base64 for large/multiline code to avoid JSON escaping issues."
+			"description": "Content to write to the file (plain text). For large or multiline code, prefer content_lines to avoid newline escaping issues."
+		},
+		"content_lines": {
+			"type": "array",
+			"items": { "type": "string" },
+			"description": "Content as an array of lines (joined with \\n). Recommended for large multiline code."
 		},
 		"content_base64": {
 			"type": "string",
@@ -279,6 +284,7 @@ func (te *ToolExecutor) executeWriteFile(argsJSON string) string {
 	var args struct {
 		Path          string `json:"path"`
 		Content       string `json:"content"`
+		ContentLines  []string `json:"content_lines"`
 		ContentBase64 string `json:"content_base64"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
@@ -286,6 +292,9 @@ func (te *ToolExecutor) executeWriteFile(argsJSON string) string {
 	}
 
 	content := args.Content
+	if len(args.ContentLines) > 0 {
+		content = strings.Join(args.ContentLines, "\n")
+	}
 	if args.ContentBase64 != "" {
 		decoded, err := base64.StdEncoding.DecodeString(args.ContentBase64)
 		if err != nil {
@@ -294,7 +303,7 @@ func (te *ToolExecutor) executeWriteFile(argsJSON string) string {
 		content = string(decoded)
 	}
 	if content == "" {
-		return "error: missing content. Provide either content or content_base64."
+		return "error: missing content. Provide content, content_lines, or content_base64."
 	}
 
 	if te.IsRemote() {
