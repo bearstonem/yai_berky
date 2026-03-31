@@ -6,13 +6,15 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/sashabaranov/go-openai"
 )
 
 type OpenAIProvider struct {
-	client *openai.Client
-	name   string
+	client          *openai.Client
+	name            string
+	betaRestricted  bool // true if model rejects temperature/top_p params
 }
 
 type OpenAIProviderConfig struct {
@@ -97,15 +99,37 @@ func (p *OpenAIProvider) toOpenAITools(tools []Tool) []openai.Tool {
 	return out
 }
 
-func (p *OpenAIProvider) Complete(ctx context.Context, req CompletionRequest) (string, error) {
-	msgs := p.toOpenAIMessages(req.Messages)
+func isBetaRestrictionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "beta-limitations") ||
+		strings.Contains(msg, "temperature") && strings.Contains(msg, "fixed at")
+}
 
-	resp, err := p.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+func (p *OpenAIProvider) buildRequest(req CompletionRequest, msgs []openai.ChatCompletionMessage) openai.ChatCompletionRequest {
+	apiReq := openai.ChatCompletionRequest{
 		Model:               req.Model,
 		MaxCompletionTokens: req.MaxTokens,
-		Temperature:         float32(req.Temperature),
 		Messages:            msgs,
-	})
+	}
+	if !p.betaRestricted {
+		apiReq.Temperature = float32(req.Temperature)
+	}
+	return apiReq
+}
+
+func (p *OpenAIProvider) Complete(ctx context.Context, req CompletionRequest) (string, error) {
+	msgs := p.toOpenAIMessages(req.Messages)
+	apiReq := p.buildRequest(req, msgs)
+
+	resp, err := p.client.CreateChatCompletion(ctx, apiReq)
+	if err != nil && !p.betaRestricted && isBetaRestrictionError(err) {
+		p.betaRestricted = true
+		apiReq = p.buildRequest(req, msgs)
+		resp, err = p.client.CreateChatCompletion(ctx, apiReq)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -119,18 +143,20 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req CompletionRequest) (s
 
 func (p *OpenAIProvider) CompleteWithTools(ctx context.Context, req CompletionRequest) (Message, error) {
 	msgs := p.toOpenAIMessages(req.Messages)
-
-	apiReq := openai.ChatCompletionRequest{
-		Model:               req.Model,
-		MaxCompletionTokens: req.MaxTokens,
-		Temperature:         float32(req.Temperature),
-		Messages:            msgs,
-	}
+	apiReq := p.buildRequest(req, msgs)
 	if len(req.Tools) > 0 {
 		apiReq.Tools = p.toOpenAITools(req.Tools)
 	}
 
 	resp, err := p.client.CreateChatCompletion(ctx, apiReq)
+	if err != nil && !p.betaRestricted && isBetaRestrictionError(err) {
+		p.betaRestricted = true
+		apiReq = p.buildRequest(req, msgs)
+		if len(req.Tools) > 0 {
+			apiReq.Tools = p.toOpenAITools(req.Tools)
+		}
+		resp, err = p.client.CreateChatCompletion(ctx, apiReq)
+	}
 	if err != nil {
 		return Message{}, err
 	}
@@ -161,14 +187,16 @@ func (p *OpenAIProvider) CompleteWithTools(ctx context.Context, req CompletionRe
 
 func (p *OpenAIProvider) StreamComplete(ctx context.Context, req CompletionRequest, ch chan<- StreamChunk) {
 	msgs := p.toOpenAIMessages(req.Messages)
+	apiReq := p.buildRequest(req, msgs)
+	apiReq.Stream = true
 
-	stream, err := p.client.CreateChatCompletionStream(ctx, openai.ChatCompletionRequest{
-		Model:               req.Model,
-		MaxCompletionTokens: req.MaxTokens,
-		Temperature:         float32(req.Temperature),
-		Messages:            msgs,
-		Stream:              true,
-	})
+	stream, err := p.client.CreateChatCompletionStream(ctx, apiReq)
+	if err != nil && !p.betaRestricted && isBetaRestrictionError(err) {
+		p.betaRestricted = true
+		apiReq = p.buildRequest(req, msgs)
+		apiReq.Stream = true
+		stream, err = p.client.CreateChatCompletionStream(ctx, apiReq)
+	}
 	if err != nil {
 		ch <- StreamChunk{Err: err, Done: true}
 		return
