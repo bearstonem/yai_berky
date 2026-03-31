@@ -25,5 +25,7 @@ func testAnalyse(t *testing.T) {
 	assert.NotEqual(t, UnknownOperatingSystem, analysis.GetOperatingSystem(), "The operating system should not be unknown.")
 	assert.NotEmpty(t, analysis.GetHomeDirectory(), "Home directory should not be empty.")
 	assert.NotEmpty(t, analysis.GetUsername(), "Username should not be empty.")
+	assert.NotEmpty(t, analysis.GetCurrentDirectory(), "Current directory should not be empty.")
+	assert.NotEmpty(t, analysis.GetWorkspaceRoot(), "Workspace root should not be empty.")
 	assert.NotEmpty(t, analysis.GetConfigFile(), "Config file should not be empty.")
 }

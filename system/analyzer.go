@@ -20,6 +20,8 @@ type Analysis struct {
 	homeDirectory   string
 	username        string
 	editor          string
+	currentDir      string
+	workspaceRoot   string
 	configFile      string
 }
 
@@ -51,11 +53,21 @@ func (a *Analysis) GetEditor() string {
 	return a.editor
 }
 
+func (a *Analysis) GetCurrentDirectory() string {
+	return a.currentDir
+}
+
+func (a *Analysis) GetWorkspaceRoot() string {
+	return a.workspaceRoot
+}
+
 func (a *Analysis) GetConfigFile() string {
 	return a.configFile
 }
 
 func Analyse() *Analysis {
+	currentDir := GetCurrentDirectory()
+	workspaceRoot := GetWorkspaceRoot(currentDir)
 	return &Analysis{
 		operatingSystem: GetOperatingSystem(),
 		distribution:    GetDistribution(),
@@ -63,6 +75,8 @@ func Analyse() *Analysis {
 		homeDirectory:   GetHomeDirectory(),
 		username:        GetUsername(),
 		editor:          GetEditor(),
+		currentDir:      currentDir,
+		workspaceRoot:   workspaceRoot,
 		configFile:      GetConfigFile(),
 	}
 }
@@ -125,6 +139,35 @@ func GetEditor() string {
 	}
 
 	return strings.Trim(name, "\n")
+}
+
+func GetCurrentDirectory() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return wd
+}
+
+func GetWorkspaceRoot(currentDir string) string {
+	// Prefer git repo root when available; otherwise fall back to cwd.
+	if currentDir == "" {
+		currentDir = GetCurrentDirectory()
+	}
+	if currentDir == "" {
+		return ""
+	}
+
+	// Try git without assuming it's installed.
+	out, err := run.RunCommand("git", "-C", currentDir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return currentDir
+	}
+	root := strings.TrimSpace(out)
+	if root == "" {
+		return currentDir
+	}
+	return root
 }
 
 func GetConfigFile() string {

@@ -16,11 +16,13 @@ import (
 const noexec = "[noexec]"
 
 type RemoteSystemInfo struct {
-	OS       string
-	Hostname string
-	Shell    string
-	HomeDir  string
-	Username string
+	OS            string
+	Hostname      string
+	Shell         string
+	HomeDir       string
+	Username      string
+	CurrentDir    string
+	WorkspaceRoot string
 }
 
 type Engine struct {
@@ -146,7 +148,8 @@ func (e *Engine) SetRemoteHost(host string) error {
 }
 
 func probeRemoteSystem(host string) (*RemoteSystemInfo, error) {
-	output, err := run.CaptureSSHCommand(host, "uname -s; echo $SHELL; echo $HOME; hostname; whoami", 15*time.Second)
+	// Keep this lightweight: gather basic info + current dir + best-effort workspace root.
+	output, err := run.CaptureSSHCommand(host, "uname -s; echo $SHELL; echo $HOME; hostname; whoami; pwd; (git rev-parse --show-toplevel 2>/dev/null || pwd)", 15*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -174,6 +177,12 @@ func probeRemoteSystem(host string) (*RemoteSystemInfo, error) {
 	}
 	if len(lines) > 4 {
 		info.Username = strings.TrimSpace(lines[4])
+	}
+	if len(lines) > 5 {
+		info.CurrentDir = strings.TrimSpace(lines[5])
+	}
+	if len(lines) > 6 {
+		info.WorkspaceRoot = strings.TrimSpace(lines[6])
 	}
 
 	return info, nil
@@ -466,6 +475,7 @@ func (e *Engine) prepareSystemPromptAgentPart() string {
 		"Guidelines:\n" +
 		"- Prefer small, incremental commands so you can observe results and adjust.\n" +
 		"- If a command fails, read the error output and try a different approach.\n" +
+		"- When calling run_command, you can optionally set working_directory to control where the command runs.\n" +
 		"- Always explain your reasoning briefly before using a tool.\n" +
 		"- When the task is complete, respond with a text summary (no tool calls).\n" +
 		"- Be careful with destructive operations (rm -rf, overwriting files). Explain the risk when relevant.\n"
@@ -586,6 +596,12 @@ func (e *Engine) prepareSystemPromptContextPart() string {
 		if e.remoteInfo.Username != "" {
 			part += fmt.Sprintf("user is %s, ", e.remoteInfo.Username)
 		}
+		if e.remoteInfo.CurrentDir != "" {
+			part += fmt.Sprintf("current directory is %s, ", e.remoteInfo.CurrentDir)
+		}
+		if e.remoteInfo.WorkspaceRoot != "" {
+			part += fmt.Sprintf("workspace root is %s, ", e.remoteInfo.WorkspaceRoot)
+		}
 		part += "take this into account. "
 		if e.config.GetUserConfig().GetPreferences() != "" {
 			part += fmt.Sprintf("Also, %s.", e.config.GetUserConfig().GetPreferences())
@@ -607,8 +623,14 @@ func (e *Engine) prepareSystemPromptContextPart() string {
 	if e.config.GetSystemConfig().GetShell() != "" {
 		part += fmt.Sprintf("my shell is %s, ", e.config.GetSystemConfig().GetShell())
 	}
-	if e.config.GetSystemConfig().GetShell() != "" {
+	if e.config.GetSystemConfig().GetEditor() != "" {
 		part += fmt.Sprintf("my editor is %s, ", e.config.GetSystemConfig().GetEditor())
+	}
+	if e.config.GetSystemConfig().GetCurrentDirectory() != "" {
+		part += fmt.Sprintf("my current directory is %s, ", e.config.GetSystemConfig().GetCurrentDirectory())
+	}
+	if e.config.GetSystemConfig().GetWorkspaceRoot() != "" {
+		part += fmt.Sprintf("my workspace root is %s, ", e.config.GetSystemConfig().GetWorkspaceRoot())
 	}
 	part += "take this into account. "
 
