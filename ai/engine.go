@@ -367,6 +367,24 @@ func (e *Engine) appendAgentMessage(msg Message) {
 	e.agentMessages = append(e.agentMessages, msg)
 }
 
+func sanitizeToolCalls(msg Message) (Message, int) {
+	if len(msg.ToolCalls) == 0 {
+		return msg, 0
+	}
+	valid := make([]ToolCall, 0, len(msg.ToolCalls))
+	dropped := 0
+	for _, tc := range msg.ToolCalls {
+		// Provider APIs may reject tool calls whose arguments aren't valid JSON.
+		if tc.Arguments != "" && !json.Valid([]byte(tc.Arguments)) {
+			dropped++
+			continue
+		}
+		valid = append(valid, tc)
+	}
+	msg.ToolCalls = valid
+	return msg, dropped
+}
+
 func (e *Engine) prepareCompletionMessages() []Message {
 	messages := []Message{
 		{Role: "system", Content: e.prepareSystemPrompt()},
@@ -383,7 +401,11 @@ func (e *Engine) prepareCompletionMessages() []Message {
 	case ExecEngineMode:
 		messages = append(messages, e.execMessages...)
 	case AgentEngineMode:
-		messages = append(messages, e.agentMessages...)
+		// Avoid sending invalid tool calls back to the provider (can 400 the request).
+		for _, m := range e.agentMessages {
+			clean, _ := sanitizeToolCalls(m)
+			messages = append(messages, clean)
+		}
 	default:
 		messages = append(messages, e.chatMessages...)
 	}
@@ -521,21 +543,32 @@ func (e *Engine) AgentCompletion(input string, autoExecute bool) error {
 			return err
 		}
 
-		if len(resp.ToolCalls) == 0 {
-			e.appendAgentMessage(resp)
-			e.agentChannel <- AgentEvent{Type: AgentEventAnswer, Content: resp.Content}
+		// If the model produced malformed tool-call JSON, don't persist it in history.
+		// Instead, ask it to retry with a valid JSON tool call.
+		cleanResp, dropped := sanitizeToolCalls(resp)
+		if dropped > 0 {
+			notice := fmt.Sprintf("Your last tool call had invalid JSON arguments and was rejected. Please retry the tool call with valid JSON arguments only (no truncation). If writing a large file, prefer write_file with content_lines and split into multiple calls if needed.")
+			e.appendAgentMessage(Message{Role: "assistant", Content: notice})
+			e.appendUserMessage(notice)
+			e.agentChannel <- AgentEvent{Type: AgentEventThinking, Content: notice}
+			continue
+		}
+
+		if len(cleanResp.ToolCalls) == 0 {
+			e.appendAgentMessage(cleanResp)
+			e.agentChannel <- AgentEvent{Type: AgentEventAnswer, Content: cleanResp.Content}
 			e.agentChannel <- AgentEvent{Type: AgentEventDone}
 			e.running = false
 			return nil
 		}
 
-		if resp.Content != "" {
-			e.agentChannel <- AgentEvent{Type: AgentEventThinking, Content: resp.Content}
+		if cleanResp.Content != "" {
+			e.agentChannel <- AgentEvent{Type: AgentEventThinking, Content: cleanResp.Content}
 		}
 
-		e.appendAgentMessage(resp)
+		e.appendAgentMessage(cleanResp)
 
-		for _, tc := range resp.ToolCalls {
+		for _, tc := range cleanResp.ToolCalls {
 			if !e.running {
 				return nil
 			}
