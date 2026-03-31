@@ -49,7 +49,24 @@ A complete documentation is available at [https://ekkinox.github.io/yai/](https:
 
 ## Quick start
 
-To install `Yai`, simply run:
+### Install from source (recommended for development)
+
+Clone the repo and run the local install script. Requires [Go](https://go.dev/dl/) 1.21+.
+
+```shell
+git clone https://github.com/ekkinox/yai.git && cd yai
+./install-local.sh
+```
+
+This builds the binary, installs it to `~/.local/bin`, and adds it to your PATH automatically. You can customize the install directory with `INSTALL_DIR`:
+
+```shell
+INSTALL_DIR=/usr/local/bin sudo ./install-local.sh
+```
+
+### Install from release
+
+To install a pre-built release binary:
 
 ```shell
 curl -sS https://raw.githubusercontent.com/ekkinox/yai/main/install.sh | bash
