@@ -73,6 +73,59 @@ var writeFileSchema = json.RawMessage(`{
 	"required": ["path"]
 }`)
 
+var editFileSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"path": {
+			"type": "string",
+			"description": "Absolute path to the file to edit. The file must already exist."
+		},
+		"old_string": {
+			"type": "string",
+			"description": "The exact text to find in the file. Must match uniquely (appears exactly once). Include enough surrounding context to ensure uniqueness."
+		},
+		"new_string": {
+			"type": "string",
+			"description": "The replacement text. To delete a section, use an empty string."
+		}
+	},
+	"required": ["path", "old_string", "new_string"]
+}`)
+
+var searchFilesSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"pattern": {
+			"type": "string",
+			"description": "The regex pattern to search for in file contents"
+		},
+		"path": {
+			"type": "string",
+			"description": "Directory to search in. Defaults to the working directory."
+		},
+		"include": {
+			"type": "string",
+			"description": "Glob pattern to filter files (e.g. '*.go', '*.js'). Optional."
+		}
+	},
+	"required": ["pattern"]
+}`)
+
+var findFilesSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"pattern": {
+			"type": "string",
+			"description": "Glob pattern to match file names (e.g. '*.go', 'Makefile', '**/*.test.js')"
+		},
+		"path": {
+			"type": "string",
+			"description": "Directory to search in. Defaults to the working directory."
+		}
+	},
+	"required": ["pattern"]
+}`)
+
 func AgentTools() []Tool {
 	return []Tool{
 		{
@@ -82,7 +135,7 @@ func AgentTools() []Tool {
 		},
 		{
 			Name:        "read_file",
-			Description: "Read the contents of a file at the given absolute path.",
+			Description: "Read the contents of a file at the given absolute path. Always read a file before editing it.",
 			Parameters:  readFileSchema,
 		},
 		{
@@ -92,8 +145,23 @@ func AgentTools() []Tool {
 		},
 		{
 			Name:        "write_file",
-			Description: "Write content to a file at the given absolute path, creating it if it doesn't exist or overwriting if it does.",
+			Description: "Create a new file or completely overwrite an existing file. For modifying existing files, prefer edit_file instead.",
 			Parameters:  writeFileSchema,
+		},
+		{
+			Name:        "edit_file",
+			Description: "Make targeted edits to an existing file using search-and-replace. Finds the exact old_string in the file and replaces it with new_string. The old_string must match exactly once in the file. Always read_file first before editing.",
+			Parameters:  editFileSchema,
+		},
+		{
+			Name:        "search_files",
+			Description: "Search file contents using a regex pattern, like grep. Returns matching lines with file paths and line numbers. Use this instead of run_command with grep.",
+			Parameters:  searchFilesSchema,
+		},
+		{
+			Name:        "find_files",
+			Description: "Find files by name pattern using glob matching. Returns matching file paths. Use this instead of run_command with find or ls.",
+			Parameters:  findFilesSchema,
 		},
 	}
 }
@@ -134,6 +202,12 @@ func (te *ToolExecutor) Execute(tc ToolCall) ToolResult {
 		content = te.executeListDirectory(tc.Arguments)
 	case "write_file":
 		content = te.executeWriteFile(tc.Arguments)
+	case "edit_file":
+		content = te.executeEditFile(tc.Arguments)
+	case "search_files":
+		content = te.executeSearchFiles(tc.Arguments)
+	case "find_files":
+		content = te.executeFindFiles(tc.Arguments)
 	default:
 		content = fmt.Sprintf("unknown tool: %s", tc.Name)
 	}
@@ -331,6 +405,199 @@ func (te *ToolExecutor) executeWriteFile(argsJSON string) string {
 	}
 
 	return fmt.Sprintf("successfully wrote %d bytes to %s", len(content), args.Path)
+}
+
+func (te *ToolExecutor) executeEditFile(argsJSON string) string {
+	var args struct {
+		Path      string `json:"path"`
+		OldString string `json:"old_string"`
+		NewString string `json:"new_string"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+
+	if te.IsRemote() {
+		// Read the remote file, perform replacement, write back
+		readOutput, err := run.CaptureSSHCommand(te.remoteHost, fmt.Sprintf("cat %s", shellQuote(args.Path)), 30*time.Second)
+		if err != nil {
+			return fmt.Sprintf("error reading file: %s", err)
+		}
+		if readOutput.ExitCode != 0 {
+			return fmt.Sprintf("error reading file: %s", readOutput.Stderr)
+		}
+		content := readOutput.Stdout
+		count := strings.Count(content, args.OldString)
+		if count == 0 {
+			return "error: old_string not found in file. Make sure it matches exactly, including whitespace and indentation."
+		}
+		if count > 1 {
+			return fmt.Sprintf("error: old_string found %d times in file. It must be unique. Include more surrounding context to disambiguate.", count)
+		}
+		newContent := strings.Replace(content, args.OldString, args.NewString, 1)
+		encoded := base64.StdEncoding.EncodeToString([]byte(newContent))
+		remoteCmd := fmt.Sprintf("base64 -d > %s", shellQuote(args.Path))
+		stdin := strings.NewReader(encoded)
+		writeOutput, err := run.CaptureSSHCommandWithStdin(te.remoteHost, remoteCmd, stdin, 30*time.Second)
+		if err != nil {
+			return fmt.Sprintf("error writing file: %s", err)
+		}
+		if writeOutput.ExitCode != 0 {
+			return fmt.Sprintf("error writing file: %s", writeOutput.Stderr)
+		}
+		return fmt.Sprintf("successfully edited %s (remote)", args.Path)
+	}
+
+	data, err := os.ReadFile(args.Path)
+	if err != nil {
+		return fmt.Sprintf("error reading file: %s", err)
+	}
+
+	content := string(data)
+	count := strings.Count(content, args.OldString)
+	if count == 0 {
+		return "error: old_string not found in file. Make sure it matches exactly, including whitespace and indentation."
+	}
+	if count > 1 {
+		return fmt.Sprintf("error: old_string found %d times in file. It must be unique. Include more surrounding context to disambiguate.", count)
+	}
+
+	newContent := strings.Replace(content, args.OldString, args.NewString, 1)
+	if err := os.WriteFile(args.Path, []byte(newContent), 0644); err != nil {
+		return fmt.Sprintf("error writing file: %s", err)
+	}
+
+	return fmt.Sprintf("successfully edited %s", args.Path)
+}
+
+func (te *ToolExecutor) executeSearchFiles(argsJSON string) string {
+	var args struct {
+		Pattern string `json:"pattern"`
+		Path    string `json:"path"`
+		Include string `json:"include"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+
+	searchDir := args.Path
+	if searchDir == "" {
+		searchDir = te.homeDir
+	}
+
+	// Build grep command
+	var cmd string
+	if te.IsRemote() {
+		// Use grep -rn on remote
+		cmd = fmt.Sprintf("grep -rn --include=%s %s %s | head -100",
+			shellQuote(func() string {
+				if args.Include != "" {
+					return args.Include
+				}
+				return "*"
+			}()),
+			shellQuote(args.Pattern),
+			shellQuote(searchDir),
+		)
+		if args.Include == "" {
+			cmd = fmt.Sprintf("grep -rn %s %s | head -100",
+				shellQuote(args.Pattern),
+				shellQuote(searchDir),
+			)
+		} else {
+			cmd = fmt.Sprintf("grep -rn --include=%s %s %s | head -100",
+				shellQuote(args.Include),
+				shellQuote(args.Pattern),
+				shellQuote(searchDir),
+			)
+		}
+		output, err := run.CaptureSSHCommand(te.remoteHost, cmd, 30*time.Second)
+		if err != nil {
+			return fmt.Sprintf("error searching: %s", err)
+		}
+		if output.Stdout == "" && output.ExitCode == 1 {
+			return "no matches found"
+		}
+		result := output.Stdout
+		if len(result) > run.MaxOutputBytes {
+			result = result[:run.MaxOutputBytes] + "\n... [results truncated]"
+		}
+		return result
+	}
+
+	// Local: use grep if available, fallback to manual search
+	if args.Include != "" {
+		cmd = fmt.Sprintf("grep -rn --include=%s %s %s | head -100",
+			shellQuote(args.Include),
+			shellQuote(args.Pattern),
+			shellQuote(searchDir),
+		)
+	} else {
+		cmd = fmt.Sprintf("grep -rn %s %s | head -100",
+			shellQuote(args.Pattern),
+			shellQuote(searchDir),
+		)
+	}
+	output, err := run.CaptureCommand(cmd, searchDir, 30*time.Second)
+	if err != nil {
+		return fmt.Sprintf("error searching: %s", err)
+	}
+	if output.Stdout == "" && output.ExitCode == 1 {
+		return "no matches found"
+	}
+	result := output.Stdout
+	if len(result) > run.MaxOutputBytes {
+		result = result[:run.MaxOutputBytes] + "\n... [results truncated]"
+	}
+	return result
+}
+
+func (te *ToolExecutor) executeFindFiles(argsJSON string) string {
+	var args struct {
+		Pattern string `json:"pattern"`
+		Path    string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+
+	searchDir := args.Path
+	if searchDir == "" {
+		searchDir = te.homeDir
+	}
+
+	cmd := fmt.Sprintf("find %s -name %s -not -path '*/\\.git/*' 2>/dev/null | head -100",
+		shellQuote(searchDir),
+		shellQuote(args.Pattern),
+	)
+
+	if te.IsRemote() {
+		output, err := run.CaptureSSHCommand(te.remoteHost, cmd, 30*time.Second)
+		if err != nil {
+			return fmt.Sprintf("error finding files: %s", err)
+		}
+		if output.Stdout == "" {
+			return "no files found matching pattern"
+		}
+		result := output.Stdout
+		if len(result) > run.MaxOutputBytes {
+			result = result[:run.MaxOutputBytes] + "\n... [results truncated]"
+		}
+		return result
+	}
+
+	output, err := run.CaptureCommand(cmd, searchDir, 30*time.Second)
+	if err != nil {
+		return fmt.Sprintf("error finding files: %s", err)
+	}
+	if output.Stdout == "" {
+		return "no files found matching pattern"
+	}
+	result := output.Stdout
+	if len(result) > run.MaxOutputBytes {
+		result = result[:run.MaxOutputBytes] + "\n... [results truncated]"
+	}
+	return result
 }
 
 func formatCapturedOutput(output *run.CapturedOutput) string {

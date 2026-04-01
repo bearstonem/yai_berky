@@ -946,6 +946,35 @@ func formatToolCallSummary(tc *ai.ToolCall) string {
 		if err := json.Unmarshal([]byte(tc.Arguments), &args); err == nil {
 			return fmt.Sprintf("write_file %s", args.Path)
 		}
+	case "edit_file":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(tc.Arguments), &args); err == nil {
+			return fmt.Sprintf("edit_file %s", args.Path)
+		}
+	case "search_files":
+		var args struct {
+			Pattern string `json:"pattern"`
+			Path    string `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(tc.Arguments), &args); err == nil {
+			if args.Path != "" {
+				return fmt.Sprintf("search_files %q in %s", args.Pattern, args.Path)
+			}
+			return fmt.Sprintf("search_files %q", args.Pattern)
+		}
+	case "find_files":
+		var args struct {
+			Pattern string `json:"pattern"`
+			Path    string `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(tc.Arguments), &args); err == nil {
+			if args.Path != "" {
+				return fmt.Sprintf("find_files %q in %s", args.Pattern, args.Path)
+			}
+			return fmt.Sprintf("find_files %q", args.Pattern)
+		}
 	}
 	return fmt.Sprintf("%s(%s)", tc.Name, tc.Arguments)
 }

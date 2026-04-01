@@ -133,9 +133,16 @@ func (r *Renderer) RenderToolResult(output string, exitCode int) string {
 		preview = preview[:maxPreview] + "\n  ... [truncated]"
 	}
 
-	badge := r.successRenderer.Render(fmt.Sprintf("[exit %d]", exitCode))
-	if exitCode != 0 {
-		badge = r.errorRenderer.Render(fmt.Sprintf("[exit %d]", exitCode))
+	var badge string
+	if strings.HasPrefix(output, "error:") || strings.HasPrefix(output, "error ") {
+		badge = r.errorRenderer.Render("[error]")
+	} else if strings.Contains(output, "exit_code: ") {
+		badge = r.successRenderer.Render(fmt.Sprintf("[exit %d]", exitCode))
+		if exitCode != 0 {
+			badge = r.errorRenderer.Render(fmt.Sprintf("[exit %d]", exitCode))
+		}
+	} else {
+		badge = r.successRenderer.Render("[ok]")
 	}
 
 	return fmt.Sprintf("  %s\n%s\n", badge, r.dimRenderer.Render(preview))

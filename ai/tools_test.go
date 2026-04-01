@@ -13,7 +13,7 @@ import (
 
 func TestAgentTools(t *testing.T) {
 	tools := AgentTools()
-	assert.Len(t, tools, 4)
+	assert.Len(t, tools, 7)
 
 	names := make([]string, len(tools))
 	for i, tool := range tools {
@@ -25,6 +25,9 @@ func TestAgentTools(t *testing.T) {
 	assert.Contains(t, names, "read_file")
 	assert.Contains(t, names, "list_directory")
 	assert.Contains(t, names, "write_file")
+	assert.Contains(t, names, "edit_file")
+	assert.Contains(t, names, "search_files")
+	assert.Contains(t, names, "find_files")
 }
 
 func TestToolExecutorRunCommand(t *testing.T) {
@@ -270,4 +273,99 @@ func TestFormatCapturedOutput(t *testing.T) {
 		assert.Contains(t, result, "stdout:\nout\n")
 		assert.Contains(t, result, "stderr:\nerr\n")
 	})
+}
+
+func TestToolExecutorEditFile(t *testing.T) {
+	te := NewToolExecutor(false, "/tmp")
+
+	t.Run("successful edit", func(t *testing.T) {
+		tmpFile := filepath.Join(t.TempDir(), "edit.txt")
+		err := os.WriteFile(tmpFile, []byte("hello world\nfoo bar\n"), 0644)
+		require.NoError(t, err)
+
+		tc := ToolCall{
+			ID:        "call_edit_1",
+			Name:      "edit_file",
+			Arguments: `{"path": "` + tmpFile + `", "old_string": "foo bar", "new_string": "baz qux"}`,
+		}
+		result := te.Execute(tc)
+		assert.Contains(t, result.Content, "successfully edited")
+
+		data, err := os.ReadFile(tmpFile)
+		require.NoError(t, err)
+		assert.Equal(t, "hello world\nbaz qux\n", string(data))
+	})
+
+	t.Run("old_string not found", func(t *testing.T) {
+		tmpFile := filepath.Join(t.TempDir(), "edit2.txt")
+		err := os.WriteFile(tmpFile, []byte("hello world\n"), 0644)
+		require.NoError(t, err)
+
+		tc := ToolCall{
+			ID:        "call_edit_2",
+			Name:      "edit_file",
+			Arguments: `{"path": "` + tmpFile + `", "old_string": "not here", "new_string": "replacement"}`,
+		}
+		result := te.Execute(tc)
+		assert.Contains(t, result.Content, "not found")
+	})
+
+	t.Run("old_string ambiguous", func(t *testing.T) {
+		tmpFile := filepath.Join(t.TempDir(), "edit3.txt")
+		err := os.WriteFile(tmpFile, []byte("foo\nfoo\n"), 0644)
+		require.NoError(t, err)
+
+		tc := ToolCall{
+			ID:        "call_edit_3",
+			Name:      "edit_file",
+			Arguments: `{"path": "` + tmpFile + `", "old_string": "foo", "new_string": "bar"}`,
+		}
+		result := te.Execute(tc)
+		assert.Contains(t, result.Content, "found 2 times")
+	})
+
+	t.Run("nonexistent file", func(t *testing.T) {
+		tc := ToolCall{
+			ID:        "call_edit_4",
+			Name:      "edit_file",
+			Arguments: `{"path": "/tmp/nonexistent_edit_xyz", "old_string": "a", "new_string": "b"}`,
+		}
+		result := te.Execute(tc)
+		assert.Contains(t, result.Content, "error reading file")
+	})
+}
+
+func TestToolExecutorSearchFiles(t *testing.T) {
+	te := NewToolExecutor(false, "/tmp")
+
+	dir := t.TempDir()
+	err := os.WriteFile(filepath.Join(dir, "test.go"), []byte("package main\nfunc hello() {}\n"), 0644)
+	require.NoError(t, err)
+
+	tc := ToolCall{
+		ID:        "call_search_1",
+		Name:      "search_files",
+		Arguments: `{"pattern": "func hello", "path": "` + dir + `"}`,
+	}
+	result := te.Execute(tc)
+	assert.Contains(t, result.Content, "func hello")
+}
+
+func TestToolExecutorFindFiles(t *testing.T) {
+	te := NewToolExecutor(false, "/tmp")
+
+	dir := t.TempDir()
+	err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0644)
+	require.NoError(t, err)
+	err = os.WriteFile(filepath.Join(dir, "readme.md"), []byte("# readme\n"), 0644)
+	require.NoError(t, err)
+
+	tc := ToolCall{
+		ID:        "call_find_1",
+		Name:      "find_files",
+		Arguments: `{"pattern": "*.go", "path": "` + dir + `"}`,
+	}
+	result := te.Execute(tc)
+	assert.Contains(t, result.Content, "main.go")
+	assert.NotContains(t, result.Content, "readme.md")
 }
