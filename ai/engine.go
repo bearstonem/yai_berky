@@ -50,6 +50,10 @@ func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
 	}
 
 	homeDir := cfg.GetSystemConfig().GetHomeDirectory()
+	workDir := cfg.GetSystemConfig().GetWorkspaceRoot()
+	if workDir == "" {
+		workDir = cfg.GetSystemConfig().GetCurrentDirectory()
+	}
 	allowSudo := cfg.GetUserConfig().GetAllowSudo()
 
 	return &Engine{
@@ -62,7 +66,7 @@ func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
 		channel:       make(chan EngineChatStreamOutput),
 		agentChannel:  make(chan AgentEvent),
 		approvalChan:  make(chan bool),
-		toolExecutor:  NewToolExecutor(allowSudo, homeDir),
+		toolExecutor:  NewToolExecutor(allowSudo, homeDir, workDir),
 		pipe:          "",
 		running:       false,
 	}, nil
@@ -142,7 +146,7 @@ func (e *Engine) SetRemoteHost(host string) error {
 	}
 
 	e.remoteInfo = info
-	e.toolExecutor.SetRemoteHost(host, info.HomeDir)
+	e.toolExecutor.SetRemoteHost(host, info.HomeDir, info.WorkspaceRoot)
 
 	return nil
 }
@@ -666,28 +670,40 @@ func (e *Engine) prepareSystemPromptContextPart() string {
 		return part
 	}
 
-	part := "My context: "
+	sys := e.config.GetSystemConfig()
 
-	if e.config.GetSystemConfig().GetOperatingSystem() != system.UnknownOperatingSystem {
-		part += fmt.Sprintf("my operating system is %s, ", e.config.GetSystemConfig().GetOperatingSystem().String())
+	// Workspace is the primary working directory — emphasize it first.
+	workDir := sys.GetWorkspaceRoot()
+	if workDir == "" {
+		workDir = sys.GetCurrentDirectory()
 	}
-	if e.config.GetSystemConfig().GetDistribution() != "" {
-		part += fmt.Sprintf("my distribution is %s, ", e.config.GetSystemConfig().GetDistribution())
+
+	part := ""
+	if workDir != "" {
+		part += fmt.Sprintf("Primary working directory: %s — this is your workspace. Default all commands, searches, and file operations here unless told otherwise. ", workDir)
 	}
-	if e.config.GetSystemConfig().GetHomeDirectory() != "" {
-		part += fmt.Sprintf("my home directory is %s, ", e.config.GetSystemConfig().GetHomeDirectory())
+
+	part += "System context: "
+	if sys.GetOperatingSystem() != system.UnknownOperatingSystem {
+		part += fmt.Sprintf("OS is %s, ", sys.GetOperatingSystem().String())
 	}
-	if e.config.GetSystemConfig().GetShell() != "" {
-		part += fmt.Sprintf("my shell is %s, ", e.config.GetSystemConfig().GetShell())
+	if sys.GetDistribution() != "" {
+		part += fmt.Sprintf("distribution is %s, ", sys.GetDistribution())
 	}
-	if e.config.GetSystemConfig().GetEditor() != "" {
-		part += fmt.Sprintf("my editor is %s, ", e.config.GetSystemConfig().GetEditor())
+	if sys.GetHomeDirectory() != "" {
+		part += fmt.Sprintf("home directory is %s, ", sys.GetHomeDirectory())
 	}
-	if e.config.GetSystemConfig().GetCurrentDirectory() != "" {
-		part += fmt.Sprintf("my current directory is %s, ", e.config.GetSystemConfig().GetCurrentDirectory())
+	if sys.GetShell() != "" {
+		part += fmt.Sprintf("shell is %s, ", sys.GetShell())
 	}
-	if e.config.GetSystemConfig().GetWorkspaceRoot() != "" {
-		part += fmt.Sprintf("my workspace root is %s, ", e.config.GetSystemConfig().GetWorkspaceRoot())
+	if sys.GetEditor() != "" {
+		part += fmt.Sprintf("editor is %s, ", sys.GetEditor())
+	}
+	if sys.GetCurrentDirectory() != "" && sys.GetCurrentDirectory() != workDir {
+		part += fmt.Sprintf("current directory is %s, ", sys.GetCurrentDirectory())
+	}
+	if sys.GetWorkspaceRoot() != "" && sys.GetWorkspaceRoot() != workDir {
+		part += fmt.Sprintf("workspace root is %s, ", sys.GetWorkspaceRoot())
 	}
 	part += "take this into account. "
 

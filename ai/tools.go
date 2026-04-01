@@ -21,7 +21,7 @@ var runCommandSchema = json.RawMessage(`{
 		},
 		"working_directory": {
 			"type": "string",
-			"description": "Working directory for the command. Defaults to the user's home directory if not specified."
+			"description": "Working directory for the command. Defaults to the current workspace if not specified."
 		}
 	},
 	"required": ["command"]
@@ -169,20 +169,30 @@ func AgentTools() []Tool {
 type ToolExecutor struct {
 	allowSudo  bool
 	homeDir    string
+	workDir    string // current working directory / workspace root — default for commands and searches
 	remoteHost string
 }
 
-func NewToolExecutor(allowSudo bool, homeDir string) *ToolExecutor {
+func NewToolExecutor(allowSudo bool, homeDir string, workDir string) *ToolExecutor {
+	if workDir == "" {
+		workDir = homeDir
+	}
 	return &ToolExecutor{
 		allowSudo: allowSudo,
 		homeDir:   homeDir,
+		workDir:   workDir,
 	}
 }
 
-func (te *ToolExecutor) SetRemoteHost(host string, remoteHomeDir string) {
+func (te *ToolExecutor) SetRemoteHost(host string, remoteHomeDir string, remoteWorkDir string) {
 	te.remoteHost = host
 	if remoteHomeDir != "" {
 		te.homeDir = remoteHomeDir
+	}
+	if remoteWorkDir != "" {
+		te.workDir = remoteWorkDir
+	} else if remoteHomeDir != "" {
+		te.workDir = remoteHomeDir
 	}
 }
 
@@ -233,7 +243,7 @@ func (te *ToolExecutor) executeRunCommand(argsJSON string) string {
 
 	workDir := args.WorkingDirectory
 	if workDir == "" {
-		workDir = te.homeDir
+		workDir = te.workDir
 	}
 
 	var output *run.CapturedOutput
@@ -482,7 +492,7 @@ func (te *ToolExecutor) executeSearchFiles(argsJSON string) string {
 
 	searchDir := args.Path
 	if searchDir == "" {
-		searchDir = te.homeDir
+		searchDir = te.workDir
 	}
 
 	// Build grep command
@@ -563,7 +573,7 @@ func (te *ToolExecutor) executeFindFiles(argsJSON string) string {
 
 	searchDir := args.Path
 	if searchDir == "" {
-		searchDir = te.homeDir
+		searchDir = te.workDir
 	}
 
 	cmd := fmt.Sprintf("find %s -name %s -not -path '*/\\.git/*' 2>/dev/null | head -100",
