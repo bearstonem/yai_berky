@@ -29,12 +29,23 @@ type ToolResult struct {
 	Content    string
 }
 
+type Usage struct {
+	InputTokens  int
+	OutputTokens int
+}
+
 type CompletionRequest struct {
 	Model       string
 	MaxTokens   int
 	Temperature float64
 	Messages    []Message
 	Tools       []Tool
+}
+
+// CompletionResponse wraps a Message with token usage info.
+type CompletionResponse struct {
+	Message Message
+	Usage   Usage
 }
 
 type StreamChunk struct {
@@ -48,4 +59,5 @@ type Provider interface {
 	CompleteWithTools(ctx context.Context, req CompletionRequest) (Message, error)
 	StreamComplete(ctx context.Context, req CompletionRequest, ch chan<- StreamChunk)
 	Name() string
+	LastUsage() Usage
 }

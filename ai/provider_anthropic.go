@@ -16,8 +16,9 @@ const (
 )
 
 type AnthropicProvider struct {
-	apiKey string
-	client *http.Client
+	apiKey    string
+	client    *http.Client
+	lastUsage Usage
 }
 
 func NewAnthropicProvider(apiKey string) *AnthropicProvider {
@@ -29,6 +30,19 @@ func NewAnthropicProvider(apiKey string) *AnthropicProvider {
 
 func (p *AnthropicProvider) Name() string {
 	return "anthropic"
+}
+
+func (p *AnthropicProvider) LastUsage() Usage {
+	return p.lastUsage
+}
+
+func (p *AnthropicProvider) recordUsage(resp *anthropicResponse) {
+	if resp.Usage != nil {
+		p.lastUsage = Usage{
+			InputTokens:  resp.Usage.InputTokens,
+			OutputTokens: resp.Usage.OutputTokens,
+		}
+	}
 }
 
 type anthropicContentBlock struct {
@@ -67,6 +81,10 @@ type anthropicResponse struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
 	StopReason string `json:"stop_reason,omitempty"`
+	Usage      *struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage,omitempty"`
 }
 
 func (p *AnthropicProvider) buildRequest(req CompletionRequest) (string, []anthropicMessage) {
@@ -174,6 +192,8 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest)
 		return "", fmt.Errorf("anthropic API error: %s", result.Error.Message)
 	}
 
+	p.recordUsage(&result)
+
 	if len(result.Content) == 0 {
 		return "", fmt.Errorf("no content in anthropic response")
 	}
@@ -244,6 +264,8 @@ func (p *AnthropicProvider) CompleteWithTools(ctx context.Context, req Completio
 	if result.Error != nil {
 		return Message{}, fmt.Errorf("anthropic API error: %s", result.Error.Message)
 	}
+
+	p.recordUsage(&result)
 
 	msg := Message{Role: "assistant"}
 	for _, block := range result.Content {

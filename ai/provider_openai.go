@@ -12,9 +12,10 @@ import (
 )
 
 type OpenAIProvider struct {
-	client          *openai.Client
-	name            string
-	betaRestricted  bool // true if model rejects temperature/top_p params
+	client         *openai.Client
+	name           string
+	betaRestricted bool // true if model rejects temperature/top_p params
+	lastUsage      Usage
 }
 
 type OpenAIProviderConfig struct {
@@ -54,6 +55,10 @@ func NewOpenAIProvider(cfg OpenAIProviderConfig) (*OpenAIProvider, error) {
 
 func (p *OpenAIProvider) Name() string {
 	return p.name
+}
+
+func (p *OpenAIProvider) LastUsage() Usage {
+	return p.lastUsage
 }
 
 func (p *OpenAIProvider) toOpenAIMessages(messages []Message) []openai.ChatCompletionMessage {
@@ -138,6 +143,11 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req CompletionRequest) (s
 		return "", errors.New("no choices returned from API")
 	}
 
+	p.lastUsage = Usage{
+		InputTokens:  resp.Usage.PromptTokens,
+		OutputTokens: resp.Usage.CompletionTokens,
+	}
+
 	return resp.Choices[0].Message.Content, nil
 }
 
@@ -163,6 +173,11 @@ func (p *OpenAIProvider) CompleteWithTools(ctx context.Context, req CompletionRe
 
 	if len(resp.Choices) == 0 {
 		return Message{}, errors.New("no choices returned from API")
+	}
+
+	p.lastUsage = Usage{
+		InputTokens:  resp.Usage.PromptTokens,
+		OutputTokens: resp.Usage.CompletionTokens,
 	}
 
 	choice := resp.Choices[0]
