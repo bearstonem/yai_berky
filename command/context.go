@@ -2,6 +2,7 @@ package command
 
 import (
 	"github.com/ekkinox/yai/config"
+	"github.com/ekkinox/yai/memory"
 	"github.com/ekkinox/yai/session"
 )
 
@@ -24,4 +25,6 @@ type Context struct {
 	SwitchProvider func(provider, apiKey, baseURL string) error
 	// Integration management
 	ReloadIntegrationsFn func()
+	// Memory store
+	MemoryStore *memory.Store
 }

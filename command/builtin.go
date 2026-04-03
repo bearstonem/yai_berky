@@ -95,6 +95,13 @@ func RegisterBuiltins(r *Registry) {
 	})
 
 	r.Register(&Command{
+		Name:        "memory",
+		Aliases:     []string{"mem"},
+		Description: "Show vector memory stats",
+		Handler:     cmdMemory,
+	})
+
+	r.Register(&Command{
 		Name:        "integrate",
 		Aliases:     []string{"int"},
 		Description: "Manage tool integrations (ComfyUI, webhooks, etc.)",
@@ -127,6 +134,7 @@ func cmdHelp(_ string, ctx *Context) Result {
 		{"/yolo", "Toggle yolo mode (auto-execute agent tools)"},
 		{"/integrate", "Manage tool integrations (add/remove/list)"},
 		{"/skill", "List or remove agent-created skills"},
+		{"/memory", "Show vector memory stats"},
 		{"/diff", "Show git diff of working tree"},
 		{"/commit <message>", "Stage all and commit"},
 		{"/status", "Show git status"},
@@ -451,6 +459,21 @@ func cmdIntegrate(args string, ctx *Context) Result {
 	default:
 		return Result{Output: "Usage: `/integrate [add|remove|toggle|list]`", IsError: true}
 	}
+}
+
+func cmdMemory(_ string, ctx *Context) Result {
+	if ctx.MemoryStore == nil {
+		return Result{Output: "Vector memory not available (no embedding provider configured).", IsError: true}
+	}
+	msgs, skills, sessions := ctx.MemoryStore.Stats()
+	out := "**Vector Memory**\n\n"
+	out += fmt.Sprintf("| Type | Indexed |\n")
+	out += fmt.Sprintf("|---|---|\n")
+	out += fmt.Sprintf("| Messages | %d |\n", msgs)
+	out += fmt.Sprintf("| Skills | %d |\n", skills)
+	out += fmt.Sprintf("| Sessions | %d |\n", sessions)
+	out += fmt.Sprintf("\nMemory is used to recall relevant past conversations and skill context.\n")
+	return Result{Output: out}
 }
 
 func cmdSkill(args string, ctx *Context) Result {

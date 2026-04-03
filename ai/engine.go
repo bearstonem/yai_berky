@@ -11,6 +11,7 @@ import (
 	"github.com/ekkinox/yai/config"
 	"github.com/ekkinox/yai/hook"
 	"github.com/ekkinox/yai/integration"
+	"github.com/ekkinox/yai/memory"
 	"github.com/ekkinox/yai/run"
 	"github.com/ekkinox/yai/session"
 	"github.com/ekkinox/yai/system"
@@ -47,6 +48,8 @@ type Engine struct {
 	session       *session.Session
 	onUsage       func(inputTokens, outputTokens int)
 	modelOverride string // runtime model override; empty = use config
+	memoryStore   *memory.Store
+	embedder      memory.EmbeddingProvider
 }
 
 func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
@@ -63,6 +66,29 @@ func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
 	allowSudo := cfg.GetUserConfig().GetAllowSudo()
 	permMode := cfg.GetUserConfig().GetPermissionMode()
 
+	// Initialize memory store (non-fatal if it fails)
+	var memStore *memory.Store
+	var embedder memory.EmbeddingProvider
+	te := newToolExecutorWithHooksAndIntegrations(allowSudo, homeDir, workDir, permMode, cfg.GetUserConfig().GetHooks(), cfg.GetUserConfig().GetIntegrations())
+	if store, err := memory.Open(homeDir); err == nil {
+		memStore = store
+		embedder = buildEmbedder(cfg)
+		// Wire skill indexing
+		if embedder != nil {
+			s, emb := store, embedder
+			te.SetOnSkillChange(func(action, name, description string) {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				switch action {
+				case "create":
+					s.IndexSkill(ctx, emb, name, description)
+				case "remove":
+					s.RemoveSkill(name)
+				}
+			})
+		}
+	}
+
 	return &Engine{
 		mode:          mode,
 		config:        cfg,
@@ -73,9 +99,11 @@ func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
 		channel:       make(chan EngineChatStreamOutput),
 		agentChannel:  make(chan AgentEvent),
 		approvalChan:  make(chan bool),
-		toolExecutor:  newToolExecutorWithHooksAndIntegrations(allowSudo, homeDir, workDir, permMode, cfg.GetUserConfig().GetHooks(), cfg.GetUserConfig().GetIntegrations()),
+		toolExecutor:  te,
 		pipe:          "",
 		running:       false,
+		memoryStore:   memStore,
+		embedder:      embedder,
 	}, nil
 }
 
@@ -111,6 +139,102 @@ func buildProvider(cfg *config.Config) (Provider, error) {
 			Name:    provider,
 		})
 	}
+}
+
+func buildEmbedder(cfg *config.Config) memory.EmbeddingProvider {
+	aiCfg := cfg.GetAiConfig()
+	provider := aiCfg.GetProvider()
+
+	// If using OpenAI or OpenRouter, use OpenAI embeddings
+	switch provider {
+	case config.ProviderOpenAI:
+		key := config.ResolveAPIKey(provider, aiCfg.GetKey())
+		if key != "" {
+			return memory.NewOpenAIEmbedder(key)
+		}
+	case config.ProviderOpenRouter:
+		// OpenRouter doesn't support embeddings; try OpenAI key
+		if key := config.ResolveAPIKey(config.ProviderOpenAI, ""); key != "" {
+			return memory.NewOpenAIEmbedder(key)
+		}
+	case config.ProviderAnthropic:
+		// Anthropic doesn't have embeddings API; try OpenAI key
+		if key := config.ResolveAPIKey(config.ProviderOpenAI, ""); key != "" {
+			return memory.NewOpenAIEmbedder(key)
+		}
+	}
+
+	// Fallback: try Ollama locally
+	return memory.NewOllamaEmbedder("", "")
+}
+
+// GetMemoryStore returns the memory store (may be nil).
+func (e *Engine) GetMemoryStore() *memory.Store {
+	return e.memoryStore
+}
+
+// GetEmbedder returns the embedding provider (may be nil).
+func (e *Engine) GetEmbedder() memory.EmbeddingProvider {
+	return e.embedder
+}
+
+// IndexMessage indexes a message into the memory store in the background.
+func (e *Engine) IndexMessage(sessionID, role, content string) {
+	if e.memoryStore == nil || e.embedder == nil || content == "" {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		e.memoryStore.IndexMessage(ctx, e.embedder, sessionID, role, content)
+	}()
+}
+
+// IndexSession indexes a session summary into the memory store.
+func (e *Engine) IndexSession(sessionID, summary, mode string) {
+	if e.memoryStore == nil || e.embedder == nil || summary == "" {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		e.memoryStore.IndexSession(ctx, e.embedder, sessionID, summary, mode)
+	}()
+}
+
+// RecallContext retrieves relevant past messages for the current query.
+func (e *Engine) RecallContext(query string, k int) string {
+	if e.memoryStore == nil || e.embedder == nil {
+		return ""
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	messages, err := e.memoryStore.SearchMessages(ctx, e.embedder, query, k)
+	if err != nil || len(messages) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("# Relevant past conversations\n")
+	b.WriteString("The following are excerpts from past interactions that may be relevant:\n\n")
+	for _, m := range messages {
+		if m.Distance > 0.7 { // skip low-relevance results
+			continue
+		}
+		content := m.Content
+		if len(content) > 500 {
+			content = content[:500] + "..."
+		}
+		b.WriteString(fmt.Sprintf("- [%s] %s\n", m.Role, content))
+	}
+
+	result := b.String()
+	if result == "# Relevant past conversations\nThe following are excerpts from past interactions that may be relevant:\n\n" {
+		return "" // nothing relevant
+	}
+	return result
 }
 
 func (e *Engine) SetMode(mode EngineMode) *Engine {
@@ -327,7 +451,11 @@ func (e *Engine) SaveSession(homeDir string) error {
 	}
 	e.session.Messages = e.exportMessages()
 	e.session.Mode = e.modeString()
-	return e.session.Save(homeDir)
+	err := e.session.Save(homeDir)
+	if err == nil {
+		e.IndexSession(e.session.ID, e.session.Summary, e.session.Mode)
+	}
+	return err
 }
 
 // LoadSession restores messages from a saved session.
@@ -524,6 +652,12 @@ func (e *Engine) appendUserMessage(content string) *Engine {
 	default:
 		e.chatMessages = append(e.chatMessages, msg)
 	}
+	// Index for memory recall
+	sid := ""
+	if e.session != nil {
+		sid = e.session.ID
+	}
+	e.IndexMessage(sid, "user", content)
 	return e
 }
 
@@ -537,6 +671,12 @@ func (e *Engine) appendAssistantMessage(content string) *Engine {
 	default:
 		e.chatMessages = append(e.chatMessages, msg)
 	}
+	// Index for memory recall
+	sid := ""
+	if e.session != nil {
+		sid = e.session.ID
+	}
+	e.IndexMessage(sid, "assistant", content)
 	return e
 }
 
@@ -563,8 +703,31 @@ func sanitizeToolCalls(msg Message) (Message, int) {
 }
 
 func (e *Engine) prepareCompletionMessages() []Message {
+	systemPrompt := e.prepareSystemPrompt()
+
+	// Inject memory recall for agent/chat modes
+	if e.mode == AgentEngineMode || e.mode == ChatEngineMode {
+		var lastUserMsg string
+		msgs := e.agentMessages
+		if e.mode == ChatEngineMode {
+			msgs = e.chatMessages
+		}
+		for i := len(msgs) - 1; i >= 0; i-- {
+			if msgs[i].Role == "user" && msgs[i].Content != "" {
+				lastUserMsg = msgs[i].Content
+				break
+			}
+		}
+		if lastUserMsg != "" {
+			recalled := e.RecallContext(lastUserMsg, 5)
+			if recalled != "" {
+				systemPrompt += "\n" + recalled
+			}
+		}
+	}
+
 	messages := []Message{
-		{Role: "system", Content: e.prepareSystemPrompt()},
+		{Role: "system", Content: systemPrompt},
 	}
 
 	if e.pipe != "" {
