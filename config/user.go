@@ -12,6 +12,8 @@ type UserConfig struct {
 	preferences       string
 	allowSudo         bool
 	agentAutoExecute  bool
+	permissionMode    PermissionMode
+	hooks             []HookConfig
 }
 
 func (c UserConfig) GetDefaultPromptMode() string {
@@ -28,4 +30,12 @@ func (c UserConfig) GetAllowSudo() bool {
 
 func (c UserConfig) GetAgentAutoExecute() bool {
 	return c.agentAutoExecute
+}
+
+func (c UserConfig) GetPermissionMode() PermissionMode {
+	return c.permissionMode
+}
+
+func (c UserConfig) GetHooks() []HookConfig {
+	return c.hooks
 }

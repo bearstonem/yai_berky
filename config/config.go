@@ -27,13 +27,24 @@ func (c *Config) GetSystemConfig() *system.Analysis {
 }
 
 func NewConfig() (*Config, error) {
-	system := system.Analyse()
+	sys := system.Analyse()
 
-	viper.SetConfigName(strings.ToLower(system.GetApplicationName()))
-	viper.AddConfigPath(fmt.Sprintf("%s/.config/", system.GetHomeDirectory()))
+	viper.SetConfigName(strings.ToLower(sys.GetApplicationName()))
+	viper.AddConfigPath(fmt.Sprintf("%s/.config/", sys.GetHomeDirectory()))
 
 	if err := viper.ReadInConfig(); err != nil {
 		return nil, err
+	}
+
+	// Layer 2: project-level config (.yai/settings.json in workspace root)
+	// Layer 3: local config (.yai/settings.local.json — gitignored overrides)
+	workRoot := sys.GetWorkspaceRoot()
+	if workRoot == "" {
+		workRoot = sys.GetCurrentDirectory()
+	}
+	if workRoot != "" {
+		overlayConfigFile(workRoot, ".yai", "settings")
+		overlayConfigFile(workRoot, ".yai", "settings.local")
 	}
 
 	provider := viper.GetString(ai_provider)
@@ -91,9 +102,29 @@ func NewConfig() (*Config, error) {
 			preferences:       viper.GetString(user_preferences),
 			allowSudo:         viper.GetBool(user_allow_sudo),
 			agentAutoExecute:  viper.GetBool(user_agent_auto_execute),
+			permissionMode:    PermissionModeFromString(viper.GetString(user_permission_mode)),
+			hooks:             LoadHooksFromViper(),
 		},
-		system: system,
+		system: sys,
 	}, nil
+}
+
+// overlayConfigFile merges a JSON config file on top of the current viper state.
+// It uses a temporary viper instance to read the file, then sets any non-zero
+// values into the main viper. This allows project/local configs to selectively
+// override user-level settings.
+func overlayConfigFile(baseDir, subDir, name string) {
+	path := fmt.Sprintf("%s/%s/%s.json", baseDir, subDir, name)
+
+	overlay := viper.New()
+	overlay.SetConfigFile(path)
+	if err := overlay.ReadInConfig(); err != nil {
+		return // file doesn't exist or can't be read — skip silently
+	}
+
+	for _, key := range overlay.AllKeys() {
+		viper.Set(key, overlay.Get(key))
+	}
 }
 
 func WriteConfig(provider, key, model, baseURL string, write bool) (*Config, error) {
