@@ -54,6 +54,8 @@ func LoadAll(homeDir string) ([]Manifest, error) {
 		if err := json.Unmarshal(data, &m); err != nil {
 			continue
 		}
+		// Fix double-encoded parameters (string instead of object)
+		m.Parameters = fixParameters(m.Parameters)
 		skills = append(skills, m)
 	}
 	return skills, nil
@@ -65,6 +67,9 @@ func Create(homeDir string, name, description, language, scriptContent string, p
 	if safeName == "" {
 		return nil, fmt.Errorf("invalid skill name: %q", name)
 	}
+
+	// Ensure parameters are not double-encoded
+	parameters = fixParameters(parameters)
 
 	dir := filepath.Join(SkillsDir(homeDir), safeName)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -114,6 +119,35 @@ func Remove(homeDir, name string) error {
 // ScriptPath returns the absolute path to a skill's script file.
 func ScriptPath(homeDir string, m Manifest) string {
 	return filepath.Join(SkillsDir(homeDir), sanitizeName(m.Name), m.ScriptFile)
+}
+
+// fixParameters unwraps double-encoded JSON parameters.
+// If parameters is a JSON string containing a JSON object, it unwraps it.
+// e.g. `"{\"type\":\"object\"}"` → `{"type":"object"}`
+func fixParameters(params json.RawMessage) json.RawMessage {
+	if len(params) == 0 {
+		return json.RawMessage(`{"type":"object","properties":{}}`)
+	}
+
+	trimmed := strings.TrimSpace(string(params))
+
+	// If it starts with a quote, it's a string — try to unwrap
+	if len(trimmed) > 0 && trimmed[0] == '"' {
+		var s string
+		if err := json.Unmarshal(params, &s); err == nil {
+			// Check if the unwrapped string is valid JSON
+			if json.Valid([]byte(s)) {
+				return json.RawMessage(s)
+			}
+		}
+	}
+
+	// Already a valid JSON object/array — return as-is
+	if json.Valid(params) {
+		return params
+	}
+
+	return json.RawMessage(`{"type":"object","properties":{}}`)
 }
 
 func sanitizeName(name string) string {

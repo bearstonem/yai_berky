@@ -192,8 +192,7 @@ var removeSkillSchema = json.RawMessage(`{
 
 var listSkillsSchema = json.RawMessage(`{
 	"type": "object",
-	"properties": {},
-	"required": []
+	"properties": {}
 }`)
 
 func AgentTools() []Tool {
@@ -260,6 +259,7 @@ type ToolExecutor struct {
 	hookRunner       *hook.Runner
 	integrationTools []integration.IntegrationTool
 	skills           []skill.Manifest
+	onSkillChange    func(action, name, description string) // "create" or "remove"
 }
 
 func NewToolExecutor(allowSudo bool, homeDir string, workDir string, permMode config.PermissionMode) *ToolExecutor {
@@ -297,6 +297,10 @@ func (te *ToolExecutor) SetIntegrations(tools []integration.IntegrationTool) {
 func (te *ToolExecutor) LoadSkills() {
 	skills, _ := skill.LoadAll(te.homeDir)
 	te.skills = skills
+}
+
+func (te *ToolExecutor) SetOnSkillChange(fn func(action, name, description string)) {
+	te.onSkillChange = fn
 }
 
 func (te *ToolExecutor) findSkill(toolName string) *skill.Manifest {
@@ -552,18 +556,30 @@ func (te *ToolExecutor) executeListDirectory(argsJSON string) string {
 
 func (te *ToolExecutor) executeWriteFile(argsJSON string) (string, string) {
 	var args struct {
-		Path          string   `json:"path"`
-		Content       string   `json:"content"`
-		ContentLines  []string `json:"content_lines"`
-		ContentBase64 string   `json:"content_base64"`
+		Path          string          `json:"path"`
+		Content       string          `json:"content"`
+		ContentLines  json.RawMessage `json:"content_lines"`
+		ContentBase64 string          `json:"content_base64"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return fmt.Sprintf("error parsing arguments: %s", err), ""
 	}
 
-	content := args.Content
+	// Parse content_lines flexibly: accept []string or a JSON-encoded string
+	var contentLines []string
 	if len(args.ContentLines) > 0 {
-		content = strings.Join(args.ContentLines, "\n")
+		if err := json.Unmarshal(args.ContentLines, &contentLines); err != nil {
+			// Try unwrapping a string that contains a JSON array
+			var s string
+			if err2 := json.Unmarshal(args.ContentLines, &s); err2 == nil {
+				_ = json.Unmarshal([]byte(s), &contentLines)
+			}
+		}
+	}
+
+	content := args.Content
+	if len(contentLines) > 0 {
+		content = strings.Join(contentLines, "\n")
 	}
 	if args.ContentBase64 != "" {
 		decoded, err := base64.StdEncoding.DecodeString(args.ContentBase64)
@@ -832,6 +848,11 @@ func (te *ToolExecutor) executeCreateSkill(argsJSON string) string {
 	// Reload skills so the new one is immediately available
 	te.LoadSkills()
 
+	// Notify for memory indexing
+	if te.onSkillChange != nil {
+		te.onSkillChange("create", m.Name, m.Description)
+	}
+
 	return fmt.Sprintf("Skill %q created successfully as tool `%s`.\nLanguage: %s\nDescription: %s\nThe skill is now available for use.", m.Name, m.ToolName(), m.Language, m.Description)
 }
 
@@ -866,6 +887,11 @@ func (te *ToolExecutor) executeRemoveSkill(argsJSON string) string {
 
 	// Reload skills
 	te.LoadSkills()
+
+	// Notify for memory cleanup
+	if te.onSkillChange != nil {
+		te.onSkillChange("remove", args.Name, "")
+	}
 
 	return fmt.Sprintf("Skill %q removed successfully.", args.Name)
 }
