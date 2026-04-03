@@ -12,9 +12,11 @@ type Context struct {
 	WorkDir      string
 	SessionID    string
 	Mode         string // "exec", "chat", "agent"
+	YoloMode     bool
 	UsageTracker *UsageTracker
 	// Callbacks for commands that need to mutate engine state
 	ResetFn     func()
 	CompactFn   func() string // returns summary of compacted messages
 	SessionList func() []session.SessionInfo
+	SetYoloFn   func(bool)
 }

@@ -54,6 +54,13 @@ func RegisterBuiltins(r *Registry) {
 	})
 
 	r.Register(&Command{
+		Name:        "yolo",
+		Aliases:     []string{"auto"},
+		Description: "Toggle yolo mode (auto-execute agent tool calls)",
+		Handler:     cmdYolo,
+	})
+
+	r.Register(&Command{
 		Name:        "diff",
 		Description: "Show git diff of working tree",
 		Handler:     cmdDiff,
@@ -93,6 +100,7 @@ func cmdHelp(_ string, ctx *Context) Result {
 		{"/cost", "Show token usage and estimated cost"},
 		{"/session", "List saved sessions"},
 		{"/mode [exec|chat|agent]", "Show or switch mode"},
+		{"/yolo", "Toggle yolo mode (auto-execute agent tools)"},
 		{"/diff", "Show git diff of working tree"},
 		{"/commit <message>", "Stage all and commit"},
 		{"/status", "Show git status"},
@@ -166,6 +174,32 @@ func cmdSession(_ string, ctx *Context) Result {
 	}
 
 	return Result{Output: out}
+}
+
+func cmdYolo(args string, ctx *Context) Result {
+	args = strings.TrimSpace(strings.ToLower(args))
+
+	var enable bool
+	switch args {
+	case "on", "true", "1", "yes":
+		enable = true
+	case "off", "false", "0", "no":
+		enable = false
+	case "":
+		// Toggle
+		enable = !ctx.YoloMode
+	default:
+		return Result{Output: "Usage: `/yolo` (toggle), `/yolo on`, `/yolo off`", IsError: true}
+	}
+
+	if ctx.SetYoloFn != nil {
+		ctx.SetYoloFn(enable)
+	}
+
+	if enable {
+		return Result{Output: "yolo:on"}
+	}
+	return Result{Output: "yolo:off"}
 }
 
 func cmdMode(args string, ctx *Context) Result {

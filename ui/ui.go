@@ -54,6 +54,8 @@ type UiState struct {
 	forceSetup bool
 	// remote SSH target
 	remoteHost string
+	// yolo mode — auto-execute all agent tool calls without confirmation
+	yoloMode bool
 }
 
 type UiDimensions struct {
@@ -917,8 +919,8 @@ func (u *Ui) startAgent(input string) tea.Cmd {
 		u.state.buffer = ""
 		u.state.command = ""
 
-		autoExec := false
-		if u.config != nil {
+		autoExec := u.state.yoloMode
+		if !autoExec && u.config != nil {
 			autoExec = u.config.GetUserConfig().GetAgentAutoExecute()
 		}
 
@@ -1032,7 +1034,11 @@ func (u *Ui) buildCommandContext() *command.Context {
 	ctx := &command.Context{
 		Config:       u.config,
 		Mode:         u.state.promptMode.String(),
+		YoloMode:     u.state.yoloMode,
 		UsageTracker: u.usageTracker,
+		SetYoloFn: func(on bool) {
+			u.state.yoloMode = on
+		},
 	}
 	if u.config != nil {
 		ctx.HomeDir = u.config.GetSystemConfig().GetHomeDirectory()
@@ -1065,6 +1071,14 @@ func (u *Ui) handleSlashCommand(input string) tea.Cmd {
 	result := cmd.Handler(args, u.buildCommandContext())
 
 	var cmds []tea.Cmd
+
+	// Handle yolo toggle
+	if result.Output == "yolo:on" {
+		return tea.Println(u.components.renderer.RenderWarning("[yolo mode ON] agent will auto-execute all tool calls"))
+	}
+	if result.Output == "yolo:off" {
+		return tea.Println(u.components.renderer.RenderSuccess("[yolo mode OFF] agent will ask for approval"))
+	}
 
 	// Handle mode switch
 	if strings.HasPrefix(result.Output, "switch:") {
