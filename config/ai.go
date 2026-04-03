@@ -87,6 +87,17 @@ func ResolveAPIKey(provider string, fallbackKey string) string {
 	return fallbackKey
 }
 
+// ProviderSupportsTools returns true if the provider supports OpenAI-style function/tool calling.
+func ProviderSupportsTools(provider string) bool {
+	switch provider {
+	case ProviderOpenAI, ProviderAnthropic, ProviderOpenRouter, ProviderMiniMax:
+		return true
+	default:
+		// Ollama, llama.cpp, LM Studio, custom — may not support tools
+		return false
+	}
+}
+
 func ProviderNeedsAPIKey(provider string) bool {
 	switch provider {
 	case ProviderOllama, ProviderLlamaCpp, ProviderLMStudio:
