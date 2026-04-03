@@ -1,8 +1,4 @@
-# 🚀 Yai 💬 - AI powered terminal assistant
-
-[![build](https://github.com/ekkinox/yai/actions/workflows/build.yml/badge.svg)](https://github.com/ekkinox/yai/actions/workflows/build.yml)
-[![release](https://github.com/ekkinox/yai/actions/workflows/release.yml/badge.svg)](https://github.com/ekkinox/yai/actions/workflows/release.yml)
-[![doc](https://github.com/ekkinox/yai/actions/workflows/doc.yml/badge.svg)](https://github.com/ekkinox/yai/actions/workflows/doc.yml)
+# Yai - AI powered terminal assistant
 
 > Unleash the power of artificial intelligence to streamline your command line experience.
 
@@ -14,10 +10,10 @@
 
 You have any questions on random topics in mind? You can also ask `Yai`, and get the power of AI without leaving `/home`.
 
-**Three modes:**
-- **Exec** (`tab` to switch) -- describe what you want, get a single command, confirm with `y`
-- **Chat** -- ask questions, get markdown answers
-- **Agent** -- give a task, the AI autonomously runs commands, reads files, and iterates until it's done
+**Three modes** (press `tab` to cycle):
+- **Exec** `🚀` -- describe what you want, get a single command, confirm with `y`
+- **Chat** `💬` -- ask questions, get markdown-rendered answers
+- **Agent** `🤖` -- give a task, the AI autonomously runs commands, reads/writes files, creates tools, and iterates until it's done
 
 It is already aware of your:
 - operating system & distribution
@@ -26,16 +22,18 @@ It is already aware of your:
 
 And you can also give any supplementary preferences to fine tune your experience.
 
-## Supported Providers
+## Features
 
-Yai supports a wide range of AI providers and local LLM runtimes:
+### Multi-Provider Support
+
+Yai works with a wide range of cloud AI providers and local LLM runtimes through a unified OpenAI-compatible interface:
 
 | Provider | Type | Default Model |
 |---|---|---|
 | [OpenAI](https://platform.openai.com/) | Cloud | `gpt-4o-mini` |
 | [Anthropic Claude](https://console.anthropic.com/) | Cloud | `claude-sonnet-4-6` |
 | [OpenRouter](https://openrouter.ai/) | Cloud (multi-model) | `openai/gpt-4o-mini` |
-| [MiniMax](https://platform.minimax.io/) | Cloud | `MiniMax-M2` |
+| [MiniMax](https://platform.minimax.io/) | Cloud | `MiniMax-M2.7` |
 | [Ollama](https://ollama.com/) | Local | `llama3.2` |
 | [llama.cpp](https://github.com/ggerganov/llama.cpp) | Local | `default` |
 | [LM Studio](https://lmstudio.ai/) | Local | `default` |
@@ -43,18 +41,129 @@ Yai supports a wide range of AI providers and local LLM runtimes:
 
 Local providers (Ollama, llama.cpp, LM Studio) do not require an API key.
 
-## Documentation
+Providers that don't support OpenAI-style function calling (Ollama, llama.cpp, LM Studio) automatically use a prompt-based tool calling fallback -- the agent describes tools in the system prompt and parses JSON responses from the model.
 
-A complete documentation is available at [https://ekkinox.github.io/yai/](https://ekkinox.github.io/yai/).
+### Agent Mode
 
-## Quick start
+Agent mode lets the AI autonomously complete multi-step tasks. Press `tab` to cycle to the `🤖 agent` prompt, describe your task, and the AI will:
 
-### Install from source (recommended for development)
+1. Plan what needs to be done
+2. Run shell commands, read/write/edit files, search the codebase
+3. Observe the output and iterate
+4. Provide a summary when finished
 
-Clone the repo and run the local install script. Requires [Go](https://go.dev/dl/) 1.21+.
+**Agent tools:**
+
+| Tool | Description |
+|---|---|
+| `run_command` | Execute shell commands via `bash -c` |
+| `read_file` | Read file contents |
+| `write_file` | Create or overwrite files (supports plain text, line arrays, and base64) |
+| `edit_file` | Make targeted edits to existing files using search/replace |
+| `list_directory` | List directory contents |
+| `search_files` | Search file contents with regex patterns (ripgrep-style) |
+| `find_files` | Find files by name/glob pattern |
+| `create_skill` | Create a reusable skill (see Skills below) |
+| `list_skills` | List all available skills |
+| `remove_skill` | Remove a skill |
+
+By default, each tool call requires your confirmation (`y/N`). Toggle auto-execution with `/yolo` at runtime, or set `USER_AGENT_AUTO_EXECUTE` to `true` in settings.
+
+### Skills -- Agent-Created Tools
+
+The agent can create its own reusable tools called **skills**. Ask the agent to build an integration -- like "add a skill to query the GitHub API" or "create a tool that converts images with ImageMagick" -- and it will:
+
+1. Write an executable script (bash, python, node, or ruby)
+2. Define the tool schema (name, description, parameters)
+3. Save it as a persistent skill available in all future sessions
+
+Skills are stored in `~/.config/yai/skills/` as a manifest + script pair. On startup, Yai loads all skills and displays them alongside the built-in tools.
+
+Manage skills with the `/skill` slash command or let the agent handle it via `create_skill` / `remove_skill`.
+
+### Vector Memory
+
+Yai includes a local vector memory system powered by **SQLite + sqlite-vec** that gives the AI cross-session context recall.
+
+**What gets indexed:**
+- Conversation messages (user and assistant)
+- Skills (name and description)
+- Session summaries
+
+**How it works:**
+- Messages are embedded as 512-dimensional vectors using OpenAI `text-embedding-3-small` (with Ollama `nomic-embed-text` as a local fallback)
+- When you start a new conversation, relevant past messages are automatically retrieved via KNN search and injected into the system prompt
+- All indexing happens in the background -- no latency impact on your interactions
+
+Check memory stats with `/memory`.
+
+### Tool Integrations
+
+Yai supports external tool integrations that extend the agent's capabilities:
+
+- **ComfyUI** -- Generate images via a local or remote ComfyUI server
+- **Webhook** -- Call arbitrary HTTP endpoints as agent tools
+
+Set up integrations with `/integrate` and manage them interactively.
+
+### Multiline Input
+
+The input field supports multiline text:
+
+- **Enter** -- submit your message
+- **Alt+Enter** or **Ctrl+J** -- insert a newline
+- **Ctrl+V** -- paste from clipboard (multiline supported)
+
+### Remote Mode
+
+Use `--remote` to run agent mode on a remote machine via SSH. Yai stays on your local machine -- all commands, file reads, and writes tunnel through SSH automatically. No install needed on the remote host.
+
+```shell
+# One-shot task on a remote host
+yai --remote user@192.168.1.81 check disk usage
+
+# Interactive REPL on a remote host
+yai --remote user@192.168.1.81
+```
+
+The `--remote` flag implies agent mode. On startup, Yai probes the remote system (OS, shell, home directory) and includes this context in the prompt so the AI generates correct commands for the target.
+
+**Requirements:** Key-based SSH authentication must be configured for the target host (Yai uses `BatchMode=yes` and will not prompt for passwords).
+
+### Permission Modes
+
+Control what the agent is allowed to do with `USER_PERMISSION_MODE`:
+
+| Mode | Description |
+|---|---|
+| `read-only` | Agent can only run commands and read files |
+| `workspace-write` (default) | Agent can also write/edit files in the workspace and create skills |
+| `full-access` | No restrictions on tool execution |
+
+### Sudo Support
+
+By default, Yai will not generate commands that use `sudo`. To enable elevated-privilege commands, set `USER_ALLOW_SUDO` to `true` in your config (`ctrl+s` inside Yai).
+
+When enabled:
+- The AI will use `sudo` when a task requires root access (installing packages, managing services, editing system files, etc.)
+- A `[sudo]` warning is shown before the confirmation prompt so you always know before executing
+- Sudo credentials are validated upfront via `sudo -v` before the actual command runs
+
+## Quick Start
+
+### Install from source
+
+Clone the repo and build. Requires [Go](https://go.dev/dl/) 1.21+ and a C compiler (CGO is required for sqlite-vec).
 
 ```shell
 git clone https://github.com/ekkinox/yai.git && cd yai
+go build -o yai .
+mv yai ~/.local/bin/   # or anywhere on your PATH
+```
+
+Or use the install script:
+
+```shell
 ./install-local.sh
 ```
 
@@ -64,19 +173,64 @@ This builds the binary, installs it to `~/.local/bin`, and adds it to your PATH 
 INSTALL_DIR=/usr/local/bin sudo ./install-local.sh
 ```
 
-### Install from release
-
-To install a pre-built release binary:
-
-```shell
-curl -sS https://raw.githubusercontent.com/ekkinox/yai/main/install.sh | bash
-```
-
 At first run, it will ask you to choose a provider and enter your API key (if needed), then create the configuration file in `~/.config/yai.json`.
 
-See [documentation](https://ekkinox.github.io/yai/getting-started/#configuration) for more information.
+### Usage
 
-### Configuration
+```shell
+# Interactive REPL (default)
+yai
+
+# One-shot exec mode
+yai list all docker containers
+
+# One-shot chat mode
+yai -c explain what a goroutine is
+
+# One-shot agent mode
+yai -a refactor the logging in this project
+
+# Agent on a remote host
+yai --remote user@host deploy the latest build
+```
+
+## Keyboard Shortcuts
+
+| Key | Action |
+|---|---|
+| `tab` | Switch between exec, chat, and agent modes |
+| `↑` / `↓` | Navigate input history |
+| `enter` | Submit input |
+| `alt+enter` / `ctrl+j` | Insert newline (multiline input) |
+| `ctrl+v` | Paste from clipboard |
+| `ctrl+h` | Show help |
+| `ctrl+s` | Edit settings |
+| `ctrl+r` | Clear terminal and reset discussion history |
+| `ctrl+l` | Clear terminal but keep discussion history |
+| `ctrl+c` | Exit or interrupt agent |
+
+## Slash Commands
+
+| Command | Description |
+|---|---|
+| `/help` | Show help |
+| `/clear` | Clear terminal |
+| `/reset` | Clear terminal and reset conversation |
+| `/compact` | Compact conversation history to save tokens |
+| `/cost` | Show token usage and estimated cost |
+| `/session [save\|load\|list]` | Manage conversation sessions |
+| `/mode [exec\|chat\|agent]` | Switch prompt mode |
+| `/model [provider/model] [--save]` | Switch model at runtime, optionally save as default |
+| `/yolo` | Toggle auto-execute for agent tool calls |
+| `/integrate` | Manage tool integrations |
+| `/skill [list\|remove <name>]` | Manage agent-created skills |
+| `/memory` | Show vector memory stats |
+| `/diff` | Show git diff of working tree |
+| `/commit <message>` | Stage all and commit |
+| `/status` | Show git status |
+| `/log` | Show recent git log |
+
+## Configuration
 
 The configuration file lives at `~/.config/yai.json`. You can edit it directly or press `ctrl+s` inside Yai.
 
@@ -92,7 +246,8 @@ The configuration file lives at `~/.config/yai.json`. You can edit it directly o
   "USER_DEFAULT_PROMPT_MODE": "exec",
   "USER_PREFERENCES": "",
   "USER_ALLOW_SUDO": false,
-  "USER_AGENT_AUTO_EXECUTE": false
+  "USER_AGENT_AUTO_EXECUTE": false,
+  "USER_PERMISSION_MODE": "workspace-write"
 }
 ```
 
@@ -109,54 +264,21 @@ The configuration file lives at `~/.config/yai.json`. You can edit it directly o
 | `USER_PREFERENCES` | Free-text preferences appended to the system prompt |
 | `USER_ALLOW_SUDO` | Allow commands with `sudo` (default `false`) |
 | `USER_AGENT_AUTO_EXECUTE` | Skip confirmation for each tool call in agent mode (default `false`) |
+| `USER_PERMISSION_MODE` | Agent permission level: `read-only`, `workspace-write`, `full-access` |
 
-Existing configs using the legacy `OPENAI_*` keys continue to work and are read as fallback values.
+**Environment variables:** Provider-specific API keys can be set via environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `MINIMAX_API_KEY`) and take precedence over the config file. Existing configs using legacy `OPENAI_*` keys continue to work.
 
-### Agent Mode
+## Building
 
-Agent mode lets the AI autonomously complete multi-step tasks. Press `tab` to cycle to the `🤖 agent` prompt, describe your task, and the AI will:
+Yai uses CGO for the sqlite-vec vector memory system. You'll need:
 
-1. Plan what needs to be done
-2. Run shell commands, read/write files as needed
-3. Observe the output and iterate
-4. Provide a summary when finished
-
-**Available tools:** `run_command`, `read_file`, `write_file`, `list_directory`
-
-By default, each tool call requires your confirmation (`y/N`). Set `USER_AGENT_AUTO_EXECUTE` to `true` to let the agent run without asking.
-
-You can also use agent mode from the command line:
+- Go 1.21+
+- A C compiler (`gcc` or `clang`)
+- SQLite development headers: `sudo apt-get install libsqlite3-dev` (Debian/Ubuntu)
 
 ```shell
-yai -a find all TODO comments in this project
+CGO_ENABLED=1 go build -o yai .
 ```
-
-#### Remote Mode
-
-Use `--remote` to run agent mode on a remote machine via SSH. Yai stays on your local machine -- all commands, file reads, and writes tunnel through SSH automatically. No install needed on the remote host.
-
-```shell
-# One-shot task on a remote host
-yai --remote user@192.168.1.81 check disk usage
-
-# Interactive REPL on a remote host
-yai --remote user@192.168.1.81
-```
-
-The `--remote` flag implies agent mode, so `-a` is not required. On startup, Yai probes the remote system (OS, shell, home directory) and includes this context in the prompt so the AI generates correct commands for the target.
-
-**Requirements:** Key-based SSH authentication must be configured for the target host (Yai uses `BatchMode=yes` and will not prompt for passwords).
-
-**Safety:** Commands time out after 60 seconds. Output is capped at 50KB to avoid flooding the conversation. Press `ctrl+c` at any time to interrupt the agent. Sudo rules from `USER_ALLOW_SUDO` are enforced.
-
-### Sudo Support
-
-By default, Yai will not generate commands that use `sudo`. To enable elevated-privilege commands, set `USER_ALLOW_SUDO` to `true` in your config (`ctrl+s` inside Yai).
-
-When enabled:
-- The AI will use `sudo` when a task requires root access (installing packages, managing services, editing system files, etc.)
-- A `[sudo]` warning is shown before the confirmation prompt so you always know before executing
-- Sudo credentials are validated upfront via `sudo -v` before the actual command runs
 
 ## Thanks
 
