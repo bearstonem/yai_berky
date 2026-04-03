@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/ekkinox/yai/config"
+	"github.com/ekkinox/yai/skill"
 )
 
 // RegisterBuiltins adds all built-in slash commands to the registry.
@@ -99,6 +100,13 @@ func RegisterBuiltins(r *Registry) {
 		Description: "Manage tool integrations (ComfyUI, webhooks, etc.)",
 		Handler:     cmdIntegrate,
 	})
+
+	r.Register(&Command{
+		Name:        "skill",
+		Aliases:     []string{"skills"},
+		Description: "List or remove agent-created skills",
+		Handler:     cmdSkill,
+	})
 }
 
 func cmdHelp(_ string, ctx *Context) Result {
@@ -118,6 +126,7 @@ func cmdHelp(_ string, ctx *Context) Result {
 		{"/model [provider/model]", "Show or switch model (use --save or /model save)"},
 		{"/yolo", "Toggle yolo mode (auto-execute agent tools)"},
 		{"/integrate", "Manage tool integrations (add/remove/list)"},
+		{"/skill", "List or remove agent-created skills"},
 		{"/diff", "Show git diff of working tree"},
 		{"/commit <message>", "Stage all and commit"},
 		{"/status", "Show git status"},
@@ -442,6 +451,46 @@ func cmdIntegrate(args string, ctx *Context) Result {
 	default:
 		return Result{Output: "Usage: `/integrate [add|remove|toggle|list]`", IsError: true}
 	}
+}
+
+func cmdSkill(args string, ctx *Context) Result {
+	args = strings.TrimSpace(args)
+
+	skills, err := skill.LoadAll(ctx.HomeDir)
+	if err != nil {
+		return Result{Output: fmt.Sprintf("Error loading skills: %s", err), IsError: true}
+	}
+
+	// /skill remove <name>
+	if strings.HasPrefix(args, "remove ") || strings.HasPrefix(args, "rm ") || strings.HasPrefix(args, "delete ") {
+		parts := strings.SplitN(args, " ", 2)
+		name := strings.TrimSpace(parts[1])
+		if name == "" {
+			return Result{Output: "Usage: `/skill remove <name>`", IsError: true}
+		}
+		if err := skill.Remove(ctx.HomeDir, name); err != nil {
+			return Result{Output: fmt.Sprintf("Error: %s", err), IsError: true}
+		}
+		return Result{Output: fmt.Sprintf("Skill `%s` removed.", name)}
+	}
+
+	// /skill (list)
+	if len(skills) == 0 {
+		return Result{Output: "No skills created yet.\n\nIn agent mode, ask the AI to create a skill for you — e.g. \"learn how to call the weather API\"."}
+	}
+
+	out := "**Agent Skills**\n\n"
+	out += "| Name | Tool | Language | Description |\n"
+	out += "|---|---|---|---|\n"
+	for _, s := range skills {
+		desc := s.Description
+		if len(desc) > 60 {
+			desc = desc[:57] + "..."
+		}
+		out += fmt.Sprintf("| `%s` | `%s` | %s | %s |\n", s.Name, s.ToolName(), s.Language, desc)
+	}
+	out += "\n**Remove:** `/skill remove <name>`"
+	return Result{Output: out}
 }
 
 func cmdMode(args string, ctx *Context) Result {

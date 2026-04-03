@@ -87,6 +87,7 @@ func newToolExecutorWithHooksAndIntegrations(allowSudo bool, homeDir, workDir st
 	if len(integrations) > 0 {
 		te.SetIntegrations(integration.BuildTools(integrations))
 	}
+	te.LoadSkills()
 	return te
 }
 
@@ -675,6 +676,14 @@ You have access to tools for shell commands, file operations, and search:
 - list_directory: List directory contents with metadata.
 - search_files: Search file contents using regex patterns (like grep). Use instead of run_command with grep.
 - find_files: Find files by name pattern using glob matching. Use instead of run_command with find.
+
+# Skills (self-created tools)
+You can create, list, and remove persistent skills — reusable tools that you build yourself:
+- create_skill: Create a new skill from a script. The script receives JSON arguments via stdin and prints output to stdout. Skills persist across sessions and become part of your tool inventory.
+- list_skills: Show all user-created skills.
+- remove_skill: Delete a skill.
+When the user asks you to "learn" an API, "add a capability", or "create a tool for X", use create_skill. Write a robust script that handles errors and edge cases. Test it after creation.
+Skills prefixed with skill_ appear as regular tools you can call.
 
 # Approach
 - Understand before acting: read relevant files and explore the codebase before making changes.

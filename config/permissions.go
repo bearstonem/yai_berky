@@ -70,6 +70,14 @@ func IsToolAllowed(toolName string, mode PermissionMode) bool {
 		if len(toolName) > 12 && toolName[:12] == "integration_" {
 			return mode >= PermWorkspaceWrite
 		}
+		// Skill tools are allowed in workspace-write mode.
+		if len(toolName) > 6 && toolName[:6] == "skill_" {
+			return mode >= PermWorkspaceWrite
+		}
+		// Skill management tools
+		if toolName == "create_skill" || toolName == "list_skills" || toolName == "remove_skill" {
+			return mode >= PermWorkspaceWrite
+		}
 		// Unknown tools require full access.
 		return mode >= PermFullAccess
 	}

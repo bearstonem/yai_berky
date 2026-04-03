@@ -13,6 +13,7 @@ import (
 	"github.com/ekkinox/yai/hook"
 	"github.com/ekkinox/yai/integration"
 	"github.com/ekkinox/yai/run"
+	"github.com/ekkinox/yai/skill"
 )
 
 var runCommandSchema = json.RawMessage(`{
@@ -150,6 +151,51 @@ var findFilesSchema = json.RawMessage(`{
 	"required": ["pattern"]
 }`)
 
+var createSkillSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"name": {
+			"type": "string",
+			"description": "Short, descriptive name for the skill (e.g. 'weather_lookup', 'translate_text', 'resize_image')"
+		},
+		"description": {
+			"type": "string",
+			"description": "What this skill does and when to use it. This description will be shown to the AI in future conversations so it knows when to invoke this skill."
+		},
+		"language": {
+			"type": "string",
+			"description": "Script language: bash, python, node, ruby. The script receives JSON arguments via stdin.",
+			"enum": ["bash", "python", "node", "ruby"]
+		},
+		"script": {
+			"type": "string",
+			"description": "The full script source code. It should read JSON from stdin to get its arguments and print its output to stdout."
+		},
+		"parameters": {
+			"type": "object",
+			"description": "JSON Schema describing the arguments this skill accepts. This schema is shown to the AI so it knows what arguments to pass."
+		}
+	},
+	"required": ["name", "description", "language", "script", "parameters"]
+}`)
+
+var removeSkillSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"name": {
+			"type": "string",
+			"description": "Name of the skill to remove"
+		}
+	},
+	"required": ["name"]
+}`)
+
+var listSkillsSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {},
+	"required": []
+}`)
+
 func AgentTools() []Tool {
 	return []Tool{
 		{
@@ -187,6 +233,21 @@ func AgentTools() []Tool {
 			Description: "Find files by name pattern using glob matching. Returns matching file paths. Supports max results and type filtering. Use this instead of run_command with find or ls.",
 			Parameters:  findFilesSchema,
 		},
+		{
+			Name:        "create_skill",
+			Description: "Create a new reusable skill (tool) that becomes permanently available. Use this when the user asks you to learn a new capability, add an API integration, or build a reusable automation. The skill's script receives JSON arguments via stdin and prints output to stdout.",
+			Parameters:  createSkillSchema,
+		},
+		{
+			Name:        "list_skills",
+			Description: "List all available user-created skills.",
+			Parameters:  listSkillsSchema,
+		},
+		{
+			Name:        "remove_skill",
+			Description: "Remove a user-created skill by name.",
+			Parameters:  removeSkillSchema,
+		},
 	}
 }
 
@@ -198,6 +259,7 @@ type ToolExecutor struct {
 	permissionMode   config.PermissionMode
 	hookRunner       *hook.Runner
 	integrationTools []integration.IntegrationTool
+	skills           []skill.Manifest
 }
 
 func NewToolExecutor(allowSudo bool, homeDir string, workDir string, permMode config.PermissionMode) *ToolExecutor {
@@ -232,7 +294,21 @@ func (te *ToolExecutor) SetIntegrations(tools []integration.IntegrationTool) {
 	te.integrationTools = tools
 }
 
-// AllTools returns built-in tools plus any integration tools.
+func (te *ToolExecutor) LoadSkills() {
+	skills, _ := skill.LoadAll(te.homeDir)
+	te.skills = skills
+}
+
+func (te *ToolExecutor) findSkill(toolName string) *skill.Manifest {
+	for i := range te.skills {
+		if te.skills[i].ToolName() == toolName {
+			return &te.skills[i]
+		}
+	}
+	return nil
+}
+
+// AllTools returns built-in tools plus integration tools plus user-created skills.
 func (te *ToolExecutor) AllTools() []Tool {
 	tools := AgentTools()
 	for _, it := range te.integrationTools {
@@ -240,6 +316,13 @@ func (te *ToolExecutor) AllTools() []Tool {
 			Name:        it.Def.Name,
 			Description: it.Def.Description,
 			Parameters:  it.Def.Parameters,
+		})
+	}
+	for _, s := range te.skills {
+		tools = append(tools, Tool{
+			Name:        s.ToolName(),
+			Description: s.Description,
+			Parameters:  s.Parameters,
 		})
 	}
 	return tools
@@ -296,11 +379,24 @@ func (te *ToolExecutor) Execute(tc ToolCall) ToolResult {
 		content = te.executeSearchFiles(tc.Arguments)
 	case "find_files":
 		content = te.executeFindFiles(tc.Arguments)
+	case "create_skill":
+		content = te.executeCreateSkill(tc.Arguments)
+	case "list_skills":
+		content = te.executeListSkills()
+	case "remove_skill":
+		content = te.executeRemoveSkill(tc.Arguments)
 	default:
 		// Check integration tools
 		if it := te.findIntegrationTool(tc.Name); it != nil {
 			result := integration.Execute(*it, tc.Arguments)
 			content = result.Content
+		} else if s := te.findSkill(tc.Name); s != nil {
+			output, err := skill.Execute(te.homeDir, *s, tc.Arguments)
+			if err != nil {
+				content = fmt.Sprintf("error executing skill %q: %s", s.Name, err)
+			} else {
+				content = output
+			}
 		} else {
 			content = fmt.Sprintf("unknown tool: %s", tc.Name)
 		}
@@ -705,6 +801,73 @@ func (te *ToolExecutor) executeFindFiles(argsJSON string) string {
 		result = result[:run.MaxOutputBytes] + "\n... [results truncated]"
 	}
 	return result
+}
+
+func (te *ToolExecutor) executeCreateSkill(argsJSON string) string {
+	var args struct {
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		Language    string          `json:"language"`
+		Script      string          `json:"script"`
+		Parameters  json.RawMessage `json:"parameters"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+
+	if args.Name == "" || args.Script == "" {
+		return "error: name and script are required"
+	}
+
+	params := args.Parameters
+	if len(params) == 0 {
+		params = json.RawMessage(`{"type":"object","properties":{},"required":[]}`)
+	}
+
+	m, err := skill.Create(te.homeDir, args.Name, args.Description, args.Language, args.Script, params)
+	if err != nil {
+		return fmt.Sprintf("error creating skill: %s", err)
+	}
+
+	// Reload skills so the new one is immediately available
+	te.LoadSkills()
+
+	return fmt.Sprintf("Skill %q created successfully as tool `%s`.\nLanguage: %s\nDescription: %s\nThe skill is now available for use.", m.Name, m.ToolName(), m.Language, m.Description)
+}
+
+func (te *ToolExecutor) executeListSkills() string {
+	skills, err := skill.LoadAll(te.homeDir)
+	if err != nil {
+		return fmt.Sprintf("error loading skills: %s", err)
+	}
+	if len(skills) == 0 {
+		return "No skills created yet. Use create_skill to add a new one."
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Found %d skill(s):\n\n", len(skills)))
+	for _, s := range skills {
+		b.WriteString(fmt.Sprintf("- %s (tool: `%s`, language: %s)\n  %s\n", s.Name, s.ToolName(), s.Language, s.Description))
+	}
+	return b.String()
+}
+
+func (te *ToolExecutor) executeRemoveSkill(argsJSON string) string {
+	var args struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+
+	if err := skill.Remove(te.homeDir, args.Name); err != nil {
+		return fmt.Sprintf("error removing skill: %s", err)
+	}
+
+	// Reload skills
+	te.LoadSkills()
+
+	return fmt.Sprintf("Skill %q removed successfully.", args.Name)
 }
 
 func formatCapturedOutput(output *run.CapturedOutput) string {
