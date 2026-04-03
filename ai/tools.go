@@ -11,6 +11,7 @@ import (
 
 	"github.com/ekkinox/yai/config"
 	"github.com/ekkinox/yai/hook"
+	"github.com/ekkinox/yai/integration"
 	"github.com/ekkinox/yai/run"
 )
 
@@ -190,12 +191,13 @@ func AgentTools() []Tool {
 }
 
 type ToolExecutor struct {
-	allowSudo      bool
-	homeDir        string
-	workDir        string // current working directory / workspace root — default for commands and searches
-	remoteHost     string
-	permissionMode config.PermissionMode
-	hookRunner     *hook.Runner
+	allowSudo        bool
+	homeDir          string
+	workDir          string // current working directory / workspace root — default for commands and searches
+	remoteHost       string
+	permissionMode   config.PermissionMode
+	hookRunner       *hook.Runner
+	integrationTools []integration.IntegrationTool
 }
 
 func NewToolExecutor(allowSudo bool, homeDir string, workDir string, permMode config.PermissionMode) *ToolExecutor {
@@ -226,8 +228,34 @@ func (te *ToolExecutor) SetHookRunner(r *hook.Runner) {
 	te.hookRunner = r
 }
 
+func (te *ToolExecutor) SetIntegrations(tools []integration.IntegrationTool) {
+	te.integrationTools = tools
+}
+
+// AllTools returns built-in tools plus any integration tools.
+func (te *ToolExecutor) AllTools() []Tool {
+	tools := AgentTools()
+	for _, it := range te.integrationTools {
+		tools = append(tools, Tool{
+			Name:        it.Def.Name,
+			Description: it.Def.Description,
+			Parameters:  it.Def.Parameters,
+		})
+	}
+	return tools
+}
+
 func (te *ToolExecutor) IsRemote() bool {
 	return te.remoteHost != ""
+}
+
+func (te *ToolExecutor) findIntegrationTool(name string) *integration.IntegrationTool {
+	for i := range te.integrationTools {
+		if te.integrationTools[i].Def.Name == name {
+			return &te.integrationTools[i]
+		}
+	}
+	return nil
 }
 
 func (te *ToolExecutor) Execute(tc ToolCall) ToolResult {
@@ -251,6 +279,7 @@ func (te *ToolExecutor) Execute(tc ToolCall) ToolResult {
 	}
 
 	var content string
+	var diff string
 
 	switch tc.Name {
 	case "run_command":
@@ -260,15 +289,21 @@ func (te *ToolExecutor) Execute(tc ToolCall) ToolResult {
 	case "list_directory":
 		content = te.executeListDirectory(tc.Arguments)
 	case "write_file":
-		content = te.executeWriteFile(tc.Arguments)
+		content, diff = te.executeWriteFile(tc.Arguments)
 	case "edit_file":
-		content = te.executeEditFile(tc.Arguments)
+		content, diff = te.executeEditFile(tc.Arguments)
 	case "search_files":
 		content = te.executeSearchFiles(tc.Arguments)
 	case "find_files":
 		content = te.executeFindFiles(tc.Arguments)
 	default:
-		content = fmt.Sprintf("unknown tool: %s", tc.Name)
+		// Check integration tools
+		if it := te.findIntegrationTool(tc.Name); it != nil {
+			result := integration.Execute(*it, tc.Arguments)
+			content = result.Content
+		} else {
+			content = fmt.Sprintf("unknown tool: %s", tc.Name)
+		}
 	}
 
 	// PostToolUse hooks
@@ -279,6 +314,7 @@ func (te *ToolExecutor) Execute(tc ToolCall) ToolResult {
 	return ToolResult{
 		ToolCallID: tc.ID,
 		Content:    content,
+		Diff:       diff,
 	}
 }
 
@@ -418,15 +454,15 @@ func (te *ToolExecutor) executeListDirectory(argsJSON string) string {
 	return output
 }
 
-func (te *ToolExecutor) executeWriteFile(argsJSON string) string {
+func (te *ToolExecutor) executeWriteFile(argsJSON string) (string, string) {
 	var args struct {
-		Path          string `json:"path"`
-		Content       string `json:"content"`
+		Path          string   `json:"path"`
+		Content       string   `json:"content"`
 		ContentLines  []string `json:"content_lines"`
-		ContentBase64 string `json:"content_base64"`
+		ContentBase64 string   `json:"content_base64"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return fmt.Sprintf("error parsing arguments: %s", err)
+		return fmt.Sprintf("error parsing arguments: %s", err), ""
 	}
 
 	content := args.Content
@@ -436,12 +472,12 @@ func (te *ToolExecutor) executeWriteFile(argsJSON string) string {
 	if args.ContentBase64 != "" {
 		decoded, err := base64.StdEncoding.DecodeString(args.ContentBase64)
 		if err != nil {
-			return fmt.Sprintf("error decoding content_base64: %s", err)
+			return fmt.Sprintf("error decoding content_base64: %s", err), ""
 		}
 		content = string(decoded)
 	}
 	if content == "" {
-		return "error: missing content. Provide content, content_lines, or content_base64."
+		return "error: missing content. Provide content, content_lines, or content_base64.", ""
 	}
 
 	if te.IsRemote() {
@@ -451,52 +487,59 @@ func (te *ToolExecutor) executeWriteFile(argsJSON string) string {
 		stdin := strings.NewReader(encoded)
 		output, err := run.CaptureSSHCommandWithStdin(te.remoteHost, remoteCmd, stdin, 30*time.Second)
 		if err != nil {
-			return fmt.Sprintf("error writing file: %s", err)
+			return fmt.Sprintf("error writing file: %s", err), ""
 		}
 		if output.ExitCode != 0 {
-			return fmt.Sprintf("error writing file: %s", output.Stderr)
+			return fmt.Sprintf("error writing file: %s", output.Stderr), ""
 		}
-		return fmt.Sprintf("successfully wrote %d bytes to %s (remote)", len(content), args.Path)
+		return fmt.Sprintf("successfully wrote %d bytes to %s (remote)", len(content), args.Path), ""
+	}
+
+	// Capture existing content for diff
+	oldContent := ""
+	if existing, err := os.ReadFile(args.Path); err == nil {
+		oldContent = string(existing)
 	}
 
 	dir := filepath.Dir(args.Path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Sprintf("error creating directory %s: %s", dir, err)
+		return fmt.Sprintf("error creating directory %s: %s", dir, err), ""
 	}
 
 	if err := os.WriteFile(args.Path, []byte(content), 0644); err != nil {
-		return fmt.Sprintf("error writing file: %s", err)
+		return fmt.Sprintf("error writing file: %s", err), ""
 	}
 
-	return fmt.Sprintf("successfully wrote %d bytes to %s", len(content), args.Path)
+	diff := generateUnifiedDiff(args.Path, oldContent, content)
+	return fmt.Sprintf("successfully wrote %d bytes to %s", len(content), args.Path), diff
 }
 
-func (te *ToolExecutor) executeEditFile(argsJSON string) string {
+func (te *ToolExecutor) executeEditFile(argsJSON string) (string, string) {
 	var args struct {
 		Path      string `json:"path"`
 		OldString string `json:"old_string"`
 		NewString string `json:"new_string"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return fmt.Sprintf("error parsing arguments: %s", err)
+		return fmt.Sprintf("error parsing arguments: %s", err), ""
 	}
 
 	if te.IsRemote() {
 		// Read the remote file, perform replacement, write back
 		readOutput, err := run.CaptureSSHCommand(te.remoteHost, fmt.Sprintf("cat %s", shellQuote(args.Path)), 30*time.Second)
 		if err != nil {
-			return fmt.Sprintf("error reading file: %s", err)
+			return fmt.Sprintf("error reading file: %s", err), ""
 		}
 		if readOutput.ExitCode != 0 {
-			return fmt.Sprintf("error reading file: %s", readOutput.Stderr)
+			return fmt.Sprintf("error reading file: %s", readOutput.Stderr), ""
 		}
 		content := readOutput.Stdout
 		count := strings.Count(content, args.OldString)
 		if count == 0 {
-			return "error: old_string not found in file. Make sure it matches exactly, including whitespace and indentation."
+			return "error: old_string not found in file. Make sure it matches exactly, including whitespace and indentation.", ""
 		}
 		if count > 1 {
-			return fmt.Sprintf("error: old_string found %d times in file. It must be unique. Include more surrounding context to disambiguate.", count)
+			return fmt.Sprintf("error: old_string found %d times in file. It must be unique. Include more surrounding context to disambiguate.", count), ""
 		}
 		newContent := strings.Replace(content, args.OldString, args.NewString, 1)
 		encoded := base64.StdEncoding.EncodeToString([]byte(newContent))
@@ -504,34 +547,35 @@ func (te *ToolExecutor) executeEditFile(argsJSON string) string {
 		stdin := strings.NewReader(encoded)
 		writeOutput, err := run.CaptureSSHCommandWithStdin(te.remoteHost, remoteCmd, stdin, 30*time.Second)
 		if err != nil {
-			return fmt.Sprintf("error writing file: %s", err)
+			return fmt.Sprintf("error writing file: %s", err), ""
 		}
 		if writeOutput.ExitCode != 0 {
-			return fmt.Sprintf("error writing file: %s", writeOutput.Stderr)
+			return fmt.Sprintf("error writing file: %s", writeOutput.Stderr), ""
 		}
-		return fmt.Sprintf("successfully edited %s (remote)", args.Path)
+		return fmt.Sprintf("successfully edited %s (remote)", args.Path), ""
 	}
 
 	data, err := os.ReadFile(args.Path)
 	if err != nil {
-		return fmt.Sprintf("error reading file: %s", err)
+		return fmt.Sprintf("error reading file: %s", err), ""
 	}
 
 	content := string(data)
 	count := strings.Count(content, args.OldString)
 	if count == 0 {
-		return "error: old_string not found in file. Make sure it matches exactly, including whitespace and indentation."
+		return "error: old_string not found in file. Make sure it matches exactly, including whitespace and indentation.", ""
 	}
 	if count > 1 {
-		return fmt.Sprintf("error: old_string found %d times in file. It must be unique. Include more surrounding context to disambiguate.", count)
+		return fmt.Sprintf("error: old_string found %d times in file. It must be unique. Include more surrounding context to disambiguate.", count), ""
 	}
 
 	newContent := strings.Replace(content, args.OldString, args.NewString, 1)
 	if err := os.WriteFile(args.Path, []byte(newContent), 0644); err != nil {
-		return fmt.Sprintf("error writing file: %s", err)
+		return fmt.Sprintf("error writing file: %s", err), ""
 	}
 
-	return fmt.Sprintf("successfully edited %s", args.Path)
+	diff := generateEditDiff(args.Path, args.OldString, args.NewString)
+	return fmt.Sprintf("successfully edited %s", args.Path), diff
 }
 
 func (te *ToolExecutor) executeSearchFiles(argsJSON string) string {
@@ -680,4 +724,207 @@ func formatCapturedOutput(output *run.CapturedOutput) string {
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+// generateUnifiedDiff produces a unified diff between old and new file content.
+// Used for write_file where we have full before/after content.
+func generateUnifiedDiff(path string, oldContent, newContent string) string {
+	if oldContent == newContent {
+		return ""
+	}
+
+	oldLines := splitLines(oldContent)
+	newLines := splitLines(newContent)
+
+	if len(oldLines) == 0 {
+		// New file — show all lines as additions (capped)
+		return formatNewFileDiff(path, newLines)
+	}
+
+	return computeUnifiedDiff(path, oldLines, newLines)
+}
+
+// generateEditDiff produces a focused diff showing old_string → new_string replacement.
+func generateEditDiff(path string, oldString, newString string) string {
+	if oldString == newString {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("--- %s\n+++ %s\n", path, path))
+
+	oldLines := splitLines(oldString)
+	newLines := splitLines(newString)
+
+	b.WriteString(fmt.Sprintf("@@ -%d +%d @@\n", len(oldLines), len(newLines)))
+	for _, line := range oldLines {
+		b.WriteString("-")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	for _, line := range newLines {
+		b.WriteString("+")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+func formatNewFileDiff(path string, lines []string) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("--- /dev/null\n+++ %s\n", path))
+
+	maxLines := 40
+	showing := lines
+	if len(showing) > maxLines {
+		showing = showing[:maxLines]
+	}
+
+	b.WriteString(fmt.Sprintf("@@ -0,0 +1,%d @@\n", len(lines)))
+	for _, line := range showing {
+		b.WriteString("+")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	if len(lines) > maxLines {
+		b.WriteString(fmt.Sprintf("... +%d more lines\n", len(lines)-maxLines))
+	}
+	return b.String()
+}
+
+// computeUnifiedDiff builds a simple unified diff using longest common subsequence.
+// For large files, falls back to a truncated view.
+func computeUnifiedDiff(path string, oldLines, newLines []string) string {
+	// For very large diffs, fall back to a simple summary
+	if len(oldLines)+len(newLines) > 2000 {
+		return fmt.Sprintf("--- %s\n+++ %s\n@@ large change: %d lines → %d lines @@\n",
+			path, path, len(oldLines), len(newLines))
+	}
+
+	// Myers-like diff: compute edit script via LCS
+	type edit struct {
+		op   byte // ' ', '-', '+'
+		line string
+	}
+
+	// Simple O(NM) LCS for reasonable file sizes
+	m, n := len(oldLines), len(newLines)
+	// Build LCS table
+	lcs := make([][]int, m+1)
+	for i := range lcs {
+		lcs[i] = make([]int, n+1)
+	}
+	for i := m - 1; i >= 0; i-- {
+		for j := n - 1; j >= 0; j-- {
+			if oldLines[i] == newLines[j] {
+				lcs[i][j] = lcs[i+1][j+1] + 1
+			} else if lcs[i+1][j] >= lcs[i][j+1] {
+				lcs[i][j] = lcs[i+1][j]
+			} else {
+				lcs[i][j] = lcs[i][j+1]
+			}
+		}
+	}
+
+	// Trace back to get edits
+	edits := make([]edit, 0, m+n)
+	i, j := 0, 0
+	for i < m && j < n {
+		if oldLines[i] == newLines[j] {
+			edits = append(edits, edit{' ', oldLines[i]})
+			i++
+			j++
+		} else if lcs[i+1][j] >= lcs[i][j+1] {
+			edits = append(edits, edit{'-', oldLines[i]})
+			i++
+		} else {
+			edits = append(edits, edit{'+', newLines[j]})
+			j++
+		}
+	}
+	for ; i < m; i++ {
+		edits = append(edits, edit{'-', oldLines[i]})
+	}
+	for ; j < n; j++ {
+		edits = append(edits, edit{'+', newLines[j]})
+	}
+
+	// Format as unified diff hunks (context=3)
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("--- %s\n+++ %s\n", path, path))
+
+	ctx := 3
+	inHunk := false
+	hunkStart := 0
+
+	for idx, e := range edits {
+		if e.op != ' ' {
+			// Start a hunk if not in one
+			if !inHunk {
+				hunkStart = idx - ctx
+				if hunkStart < 0 {
+					hunkStart = 0
+				}
+				inHunk = true
+				// Write hunk header (simplified)
+				b.WriteString("@@ ... @@\n")
+				// Write leading context
+				for k := hunkStart; k < idx; k++ {
+					b.WriteString(" ")
+					b.WriteString(edits[k].line)
+					b.WriteString("\n")
+				}
+			}
+			b.WriteByte(e.op)
+			b.WriteString(e.line)
+			b.WriteString("\n")
+		} else if inHunk {
+			// Count trailing context
+			endOfChanges := true
+			for k := idx + 1; k < len(edits) && k <= idx+ctx; k++ {
+				if edits[k].op != ' ' {
+					endOfChanges = false
+					break
+				}
+			}
+			if endOfChanges && idx-hunkStart > 2*ctx+20 {
+				// Close hunk after trailing context
+				b.WriteString(" ")
+				b.WriteString(e.line)
+				b.WriteString("\n")
+
+				// Check if we've written enough trailing context
+				trailingCount := 0
+				for k := idx; k >= 0 && edits[k].op == ' '; k-- {
+					trailingCount++
+				}
+				if trailingCount >= ctx {
+					inHunk = false
+				}
+			} else {
+				b.WriteString(" ")
+				b.WriteString(e.line)
+				b.WriteString("\n")
+			}
+		}
+	}
+
+	result := b.String()
+	if len(result) > 4000 {
+		result = result[:4000] + "\n... [diff truncated]\n"
+	}
+	return result
+}
+
+func splitLines(s string) []string {
+	if s == "" {
+		return nil
+	}
+	lines := strings.Split(s, "\n")
+	// Remove trailing empty line from final newline
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
 }

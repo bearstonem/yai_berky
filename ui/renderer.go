@@ -20,16 +20,24 @@ const (
 	warning_color = "#ffcc00"
 	success_color = "#46b946"
 	dim_color     = "#888888"
+	diff_add_color    = "#46b946"
+	diff_remove_color = "#cc3333"
+	diff_hunk_color   = "#66b3ff"
+	diff_header_color = "#bbbbbb"
 )
 
 type Renderer struct {
-	contentRenderer *glamour.TermRenderer
-	successRenderer lipgloss.Style
-	warningRenderer lipgloss.Style
-	errorRenderer   lipgloss.Style
-	helpRenderer    lipgloss.Style
-	agentRenderer   lipgloss.Style
-	dimRenderer     lipgloss.Style
+	contentRenderer   *glamour.TermRenderer
+	successRenderer   lipgloss.Style
+	warningRenderer   lipgloss.Style
+	errorRenderer     lipgloss.Style
+	helpRenderer      lipgloss.Style
+	agentRenderer     lipgloss.Style
+	dimRenderer       lipgloss.Style
+	diffAddRenderer   lipgloss.Style
+	diffRemoveRenderer lipgloss.Style
+	diffHunkRenderer  lipgloss.Style
+	diffHeaderRenderer lipgloss.Style
 }
 
 func NewRenderer(options ...glamour.TermRendererOption) *Renderer {
@@ -44,15 +52,23 @@ func NewRenderer(options ...glamour.TermRendererOption) *Renderer {
 	helpRenderer := lipgloss.NewStyle().Foreground(lipgloss.Color(help_color)).Italic(true)
 	agentRenderer := lipgloss.NewStyle().Foreground(lipgloss.Color(agent_color))
 	dimRenderer := lipgloss.NewStyle().Foreground(lipgloss.Color(dim_color)).Italic(true)
+	diffAddRenderer := lipgloss.NewStyle().Foreground(lipgloss.Color(diff_add_color))
+	diffRemoveRenderer := lipgloss.NewStyle().Foreground(lipgloss.Color(diff_remove_color))
+	diffHunkRenderer := lipgloss.NewStyle().Foreground(lipgloss.Color(diff_hunk_color))
+	diffHeaderRenderer := lipgloss.NewStyle().Foreground(lipgloss.Color(diff_header_color)).Bold(true)
 
 	return &Renderer{
-		contentRenderer: contentRenderer,
-		successRenderer: successRenderer,
-		warningRenderer: warningRenderer,
-		errorRenderer:   errorRenderer,
-		helpRenderer:    helpRenderer,
-		agentRenderer:   agentRenderer,
-		dimRenderer:     dimRenderer,
+		contentRenderer:    contentRenderer,
+		successRenderer:    successRenderer,
+		warningRenderer:    warningRenderer,
+		errorRenderer:      errorRenderer,
+		helpRenderer:       helpRenderer,
+		agentRenderer:      agentRenderer,
+		dimRenderer:        dimRenderer,
+		diffAddRenderer:    diffAddRenderer,
+		diffRemoveRenderer: diffRemoveRenderer,
+		diffHunkRenderer:   diffHunkRenderer,
+		diffHeaderRenderer: diffHeaderRenderer,
 	}
 }
 
@@ -126,7 +142,7 @@ func (r *Renderer) RenderToolCall(name string, args string) string {
 		r.dimRenderer.Render(fmt.Sprintf("  %s", args)) + "\n"
 }
 
-func (r *Renderer) RenderToolResult(output string, exitCode int) string {
+func (r *Renderer) RenderToolResult(output string, exitCode int, diff string) string {
 	maxPreview := 500
 	preview := output
 	if len(preview) > maxPreview {
@@ -145,7 +161,48 @@ func (r *Renderer) RenderToolResult(output string, exitCode int) string {
 		badge = r.successRenderer.Render("[ok]")
 	}
 
-	return fmt.Sprintf("  %s\n%s\n", badge, r.dimRenderer.Render(preview))
+	result := fmt.Sprintf("  %s\n%s\n", badge, r.dimRenderer.Render(preview))
+
+	if diff != "" {
+		result += r.RenderDiff(diff)
+	}
+
+	return result
+}
+
+// RenderDiff colorizes a unified diff string line by line.
+func (r *Renderer) RenderDiff(diff string) string {
+	lines := strings.Split(diff, "\n")
+	var b strings.Builder
+
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "---") || strings.HasPrefix(line, "+++"):
+			b.WriteString("  ")
+			b.WriteString(r.diffHeaderRenderer.Render(line))
+		case strings.HasPrefix(line, "@@"):
+			b.WriteString("  ")
+			b.WriteString(r.diffHunkRenderer.Render(line))
+		case strings.HasPrefix(line, "+"):
+			b.WriteString("  ")
+			b.WriteString(r.diffAddRenderer.Render(line))
+		case strings.HasPrefix(line, "-"):
+			b.WriteString("  ")
+			b.WriteString(r.diffRemoveRenderer.Render(line))
+		case strings.HasPrefix(line, "..."):
+			b.WriteString("  ")
+			b.WriteString(r.dimRenderer.Render(line))
+		default:
+			b.WriteString("  ")
+			b.WriteString(r.dimRenderer.Render(line))
+		}
+		b.WriteString("\n")
+	}
+
+	return b.String()
 }
 
 func (r *Renderer) RenderAgentThinking(text string) string {
@@ -173,7 +230,7 @@ func (r *Renderer) RenderHelpMessage() string {
 	help += "- `ctrl+r`: clear terminal and reset discussion history\n"
 	help += "- `ctrl+l`: clear terminal but keep discussion history\n"
 	help += "- `ctrl+c`: exit or interrupt command execution\n\n"
-	help += "**Slash commands:** `/help`, `/clear`, `/reset`, `/compact`, `/cost`, `/session`, `/mode`, `/model`, `/yolo`, `/diff`, `/commit`, `/status`, `/log`\n\n"
+	help += "**Slash commands:** `/help`, `/clear`, `/reset`, `/compact`, `/cost`, `/session`, `/mode`, `/model`, `/yolo`, `/integrate`, `/diff`, `/commit`, `/status`, `/log`\n\n"
 	help += "**Agent mode:** the AI autonomously runs commands to complete tasks.\n"
 	help += "Use `/yolo` to toggle auto-execution at runtime, or set `USER_AGENT_AUTO_EXECUTE` in settings (`ctrl+s`).\n\n"
 	help += "**Permissions:** set `USER_PERMISSION_MODE` to `read-only`, `workspace-write` (default), or `full-access`.\n"

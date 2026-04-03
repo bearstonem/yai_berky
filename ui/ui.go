@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -28,6 +29,18 @@ const (
 	configStepAPIKey
 	configStepBaseURL
 	configStepDone
+)
+
+type integrateStep int
+
+const (
+	integrateStepType integrateStep = iota
+	integrateStepName
+	integrateStepEndpoint
+	integrateStepAPIKey
+	integrateStepWorkflow
+	integrateStepMethod
+	integrateStepDone
 )
 
 type UiState struct {
@@ -56,6 +69,15 @@ type UiState struct {
 	remoteHost string
 	// yolo mode — auto-execute all agent tool calls without confirmation
 	yoloMode bool
+	// integration wizard state
+	integrating         bool
+	integrateStep       integrateStep
+	integrateType       string
+	integrateName       string
+	integrateEndpoint   string
+	integrateAPIKey     string
+	integrateWorkflow   string
+	integrateMethod     string
 }
 
 type UiDimensions struct {
@@ -236,6 +258,9 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			if u.state.configuring {
 				return u, u.handleConfigInput(u.components.prompt.GetValue())
+			}
+			if u.state.integrating {
+				return u, u.handleIntegrateInput(u.components.prompt.GetValue())
 			}
 			if !u.state.querying && !u.state.confirming && !u.state.agentRunning {
 				input := u.components.prompt.GetValue()
@@ -450,7 +475,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if strings.Contains(tr.Content, "exit_code: ") {
 				fmt.Sscanf(tr.Content, "exit_code: %d", &exitCode)
 			}
-			output := u.components.renderer.RenderToolResult(tr.Content, exitCode)
+			output := u.components.renderer.RenderToolResult(tr.Content, exitCode, tr.Diff)
 			return u, tea.Sequence(
 				tea.Println(output),
 				u.awaitAgentEvent(),
@@ -515,7 +540,7 @@ func (u *Ui) View() string {
 		return u.components.renderer.RenderError(fmt.Sprintf("[error] %s", u.state.error))
 	}
 
-	if u.state.configuring {
+	if u.state.configuring || u.state.integrating {
 		return fmt.Sprintf(
 			"%s\n%s",
 			u.components.renderer.RenderContent(u.state.buffer),
@@ -595,6 +620,7 @@ func (u *Ui) startRepl(cfg *config.Config) tea.Cmd {
 			}
 			u.state.command = ""
 			u.components.prompt = NewPrompt(u.state.promptMode)
+			u.components.prompt.SetModelLabel(cfg.GetAiConfig().GetModel())
 			if u.state.remoteHost != "" {
 				u.components.prompt.SetRemoteHost(u.state.remoteHost)
 			}
@@ -829,6 +855,7 @@ func (u *Ui) finishConfig() tea.Cmd {
 				u.state.buffer = ""
 				u.state.command = ""
 				u.components.prompt = NewPrompt(ExecPromptMode)
+				u.components.prompt.SetModelLabel(cfg.GetAiConfig().GetModel())
 				return nil
 			},
 		)
@@ -864,6 +891,253 @@ func (u *Ui) finishConfig() tea.Cmd {
 			)
 		}
 	}
+}
+
+// ── Integration wizard ──
+
+func (u *Ui) startIntegrationWizard() tea.Cmd {
+	return func() tea.Msg {
+		u.state.integrating = true
+		u.state.integrateStep = integrateStepType
+
+		available := config.AvailableIntegrations()
+		buf := "**Add Integration**\n\nChoose a type:\n\n"
+		for i, info := range available {
+			buf += fmt.Sprintf("  `%d` - **%s** — %s\n", i+1, info.DisplayName, info.Description)
+		}
+
+		u.state.buffer = buf
+		u.state.command = ""
+		u.components.prompt.SetMode(ConfigPromptMode)
+		u.components.prompt.SetEchoMode(textinput.EchoNormal)
+		u.components.prompt.SetPlaceholder(fmt.Sprintf("Enter number (1-%d)...", len(available)))
+		return nil
+	}
+}
+
+func (u *Ui) handleIntegrateInput(input string) tea.Cmd {
+	input = strings.TrimSpace(input)
+
+	switch u.state.integrateStep {
+	case integrateStepType:
+		return u.handleIntegrateType(input)
+	case integrateStepName:
+		return u.handleIntegrateName(input)
+	case integrateStepEndpoint:
+		return u.handleIntegrateEndpoint(input)
+	case integrateStepAPIKey:
+		return u.handleIntegrateAPIKey(input)
+	case integrateStepWorkflow:
+		return u.handleIntegrateWorkflow(input)
+	case integrateStepMethod:
+		return u.handleIntegrateMethod(input)
+	default:
+		return nil
+	}
+}
+
+func (u *Ui) handleIntegrateType(input string) tea.Cmd {
+	available := config.AvailableIntegrations()
+	num, err := strconv.Atoi(input)
+	if err != nil || num < 1 || num > len(available) {
+		return func() tea.Msg {
+			u.state.buffer += u.components.renderer.RenderError(
+				fmt.Sprintf("\nInvalid selection. Enter 1-%d.\n", len(available)),
+			)
+			u.components.prompt.SetValue("")
+			return nil
+		}
+	}
+
+	info := available[num-1]
+	u.state.integrateType = string(info.Type)
+	u.state.integrateStep = integrateStepName
+
+	return func() tea.Msg {
+		u.state.buffer = fmt.Sprintf("**Setting up %s**\n\nEnter a name for this integration (e.g., `my-comfyui`, `image-gen`):\n", info.DisplayName)
+		u.components.prompt.SetValue("")
+		u.components.prompt.SetEchoMode(textinput.EchoNormal)
+		u.components.prompt.SetPlaceholder("Integration name...")
+		return nil
+	}
+}
+
+func (u *Ui) handleIntegrateName(input string) tea.Cmd {
+	if input == "" {
+		return func() tea.Msg {
+			u.state.buffer += u.components.renderer.RenderError("\nName cannot be empty.\n")
+			u.components.prompt.SetValue("")
+			return nil
+		}
+	}
+	u.state.integrateName = input
+	u.state.integrateStep = integrateStepEndpoint
+
+	placeholder := "http://localhost:8188"
+	if config.IntegrationType(u.state.integrateType) == config.IntegrationWebhook {
+		placeholder = "https://api.example.com/webhook"
+	}
+
+	return func() tea.Msg {
+		u.state.buffer = fmt.Sprintf("**Endpoint URL**\n\nEnter the API endpoint for `%s`:\n", u.state.integrateName)
+		u.components.prompt.SetValue("")
+		u.components.prompt.SetPlaceholder(placeholder)
+		return nil
+	}
+}
+
+func (u *Ui) handleIntegrateEndpoint(input string) tea.Cmd {
+	if input == "" {
+		return func() tea.Msg {
+			u.state.buffer += u.components.renderer.RenderError("\nEndpoint cannot be empty.\n")
+			u.components.prompt.SetValue("")
+			return nil
+		}
+	}
+	u.state.integrateEndpoint = input
+	u.components.prompt.SetValue("")
+
+	intType := config.IntegrationType(u.state.integrateType)
+
+	// Route to next step based on integration type
+	switch intType {
+	case config.IntegrationComfyUI:
+		u.state.integrateStep = integrateStepWorkflow
+		return func() tea.Msg {
+			u.state.buffer = "**ComfyUI Workflow**\n\n" +
+				"Paste the path to your ComfyUI API-format workflow JSON file.\n" +
+				"(Export from ComfyUI: Save (API Format), then provide the file path)\n\n" +
+				"Or press Enter to skip (you can set it later in the config file).\n"
+			u.components.prompt.SetPlaceholder("/path/to/workflow_api.json")
+			return nil
+		}
+	case config.IntegrationWebhook:
+		u.state.integrateStep = integrateStepAPIKey
+		return func() tea.Msg {
+			u.state.buffer = "**API Key** (optional)\n\nEnter an API key for authentication, or press Enter to skip:\n"
+			u.components.prompt.SetEchoMode(textinput.EchoPassword)
+			u.components.prompt.SetPlaceholder("API key (or Enter to skip)...")
+			return nil
+		}
+	default:
+		return u.finishIntegration()
+	}
+}
+
+func (u *Ui) handleIntegrateAPIKey(input string) tea.Cmd {
+	u.state.integrateAPIKey = input
+	u.components.prompt.SetValue("")
+	u.components.prompt.SetEchoMode(textinput.EchoNormal)
+
+	intType := config.IntegrationType(u.state.integrateType)
+	if intType == config.IntegrationWebhook {
+		u.state.integrateStep = integrateStepMethod
+		return func() tea.Msg {
+			u.state.buffer = "**HTTP Method**\n\nEnter the HTTP method (default: POST):\n"
+			u.components.prompt.SetPlaceholder("POST")
+			return nil
+		}
+	}
+
+	return u.finishIntegration()
+}
+
+func (u *Ui) handleIntegrateWorkflow(input string) tea.Cmd {
+	u.components.prompt.SetValue("")
+
+	if input != "" {
+		// Read workflow file
+		data, err := readWorkflowFile(input)
+		if err != nil {
+			return func() tea.Msg {
+				u.state.buffer += u.components.renderer.RenderError(fmt.Sprintf("\nError reading workflow: %s\n", err))
+				return nil
+			}
+		}
+		u.state.integrateWorkflow = string(data)
+	}
+
+	return u.finishIntegration()
+}
+
+func (u *Ui) handleIntegrateMethod(input string) tea.Cmd {
+	u.components.prompt.SetValue("")
+	if input == "" {
+		input = "POST"
+	}
+	u.state.integrateMethod = input
+	return u.finishIntegration()
+}
+
+func (u *Ui) finishIntegration() tea.Cmd {
+	u.state.integrating = false
+	u.state.integrateStep = integrateStepDone
+
+	ic := config.IntegrationConfig{
+		Type:     config.IntegrationType(u.state.integrateType),
+		Name:     u.state.integrateName,
+		Endpoint: u.state.integrateEndpoint,
+		APIKey:   u.state.integrateAPIKey,
+		Method:   u.state.integrateMethod,
+		Enabled:  true,
+	}
+
+	if u.state.integrateWorkflow != "" {
+		ic.Workflow = json.RawMessage(u.state.integrateWorkflow)
+	}
+
+	config.AddIntegration(ic)
+
+	// Persist to disk
+	sys := u.config.GetSystemConfig()
+	viper.WriteConfigAs(sys.GetConfigFile())
+
+	// Reload integrations in the engine
+	u.reloadIntegrations()
+
+	// Clear wizard state
+	u.state.integrateType = ""
+	u.state.integrateName = ""
+	u.state.integrateEndpoint = ""
+	u.state.integrateAPIKey = ""
+	u.state.integrateWorkflow = ""
+	u.state.integrateMethod = ""
+
+	return tea.Sequence(
+		tea.Println(u.components.renderer.RenderSuccess(
+			fmt.Sprintf("[integration added] %s (%s) at %s", ic.Name, string(ic.Type), ic.Endpoint),
+		)),
+		func() tea.Msg {
+			u.state.buffer = ""
+			u.state.command = ""
+			u.components.prompt = NewPrompt(u.state.promptMode)
+			u.components.prompt.SetModelLabel(u.engine.GetModel())
+			if u.state.remoteHost != "" {
+				u.components.prompt.SetRemoteHost(u.state.remoteHost)
+			}
+			return nil
+		},
+		textinput.Blink,
+	)
+}
+
+func (u *Ui) reloadIntegrations() {
+	integrations := config.LoadIntegrationsFromViper()
+	if u.engine != nil {
+		u.engine.ReloadIntegrations(integrations)
+	}
+}
+
+func readWorkflowFile(path string) (json.RawMessage, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var raw json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %w", err)
+	}
+	return raw, nil
 }
 
 func (u *Ui) startExec(input string) tea.Cmd {
@@ -1062,9 +1336,13 @@ func (u *Ui) buildCommandContext() *command.Context {
 			if u.usageTracker != nil {
 				u.usageTracker.SetModel(model)
 			}
+			u.components.prompt.SetModelLabel(model)
 		}
 		ctx.SwitchProvider = func(provider, apiKey, baseURL string) error {
 			return u.engine.SwitchProvider(provider, apiKey, baseURL)
+		}
+		ctx.ReloadIntegrationsFn = func() {
+			u.reloadIntegrations()
 		}
 	}
 	ctx.SessionList = func() []session.SessionInfo {
@@ -1083,6 +1361,11 @@ func (u *Ui) handleSlashCommand(input string) tea.Cmd {
 	result := cmd.Handler(args, u.buildCommandContext())
 
 	var cmds []tea.Cmd
+
+	// Handle integration add wizard
+	if result.Output == "integrate:add" {
+		return u.startIntegrationWizard()
+	}
 
 	// Handle model switch
 	if strings.HasPrefix(result.Output, "model:") {

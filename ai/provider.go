@@ -27,6 +27,7 @@ type ToolCall struct {
 type ToolResult struct {
 	ToolCallID string
 	Content    string
+	Diff       string // unified diff of file changes (for write_file/edit_file)
 }
 
 type Usage struct {
