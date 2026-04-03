@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/ekkinox/yai/config"
+	"github.com/ekkinox/yai/skill"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
@@ -229,8 +230,10 @@ func (r *Renderer) RenderHelpMessage() string {
 	help += "- `ctrl+s`: edit settings\n"
 	help += "- `ctrl+r`: clear terminal and reset discussion history\n"
 	help += "- `ctrl+l`: clear terminal but keep discussion history\n"
-	help += "- `ctrl+c`: exit or interrupt command execution\n\n"
-	help += "**Slash commands:** `/help`, `/clear`, `/reset`, `/compact`, `/cost`, `/session`, `/mode`, `/model`, `/yolo`, `/integrate`, `/skill`, `/diff`, `/commit`, `/status`, `/log`\n\n"
+	help += "- `ctrl+c`: exit or interrupt command execution\n"
+	help += "- `alt+enter` or `ctrl+j`: insert newline (multiline input)\n"
+	help += "- `ctrl+v`: paste (supports multiline)\n\n"
+	help += "**Slash commands:** `/help`, `/clear`, `/reset`, `/compact`, `/cost`, `/session`, `/mode`, `/model`, `/yolo`, `/integrate`, `/skill`, `/memory`, `/diff`, `/commit`, `/status`, `/log`\n\n"
 	help += "**Agent mode:** the AI autonomously runs commands to complete tasks.\n"
 	help += "Use `/yolo` to toggle auto-execution at runtime, or set `USER_AGENT_AUTO_EXECUTE` in settings (`ctrl+s`).\n\n"
 	help += "**Permissions:** set `USER_PERMISSION_MODE` to `read-only`, `workspace-write` (default), or `full-access`.\n"
@@ -252,4 +255,26 @@ func (r *Renderer) RenderProviderInfo(cfg config.AiConfig) string {
 	}
 
 	return info
+}
+
+func (r *Renderer) RenderMemoryStatus(messages, skills, sessions int) string {
+	line := fmt.Sprintf("  memory: %d messages, %d skills, %d sessions indexed", messages, skills, sessions)
+	return r.dimRenderer.Render(line) + "\n\n"
+}
+
+func (r *Renderer) RenderSkillsList(skills []skill.Manifest) string {
+	var b strings.Builder
+	b.WriteString(r.dimRenderer.Render(fmt.Sprintf("  %d skill(s) loaded:", len(skills))))
+	b.WriteString("\n")
+	for _, s := range skills {
+		desc := s.Description
+		if len(desc) > 50 {
+			desc = desc[:47] + "..."
+		}
+		line := fmt.Sprintf("    %s  %s", s.ToolName(), desc)
+		b.WriteString(r.dimRenderer.Render(line))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+	return b.String()
 }

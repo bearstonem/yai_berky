@@ -2,7 +2,10 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -21,27 +24,47 @@ const (
 
 type Prompt struct {
 	mode       PromptMode
-	input      textinput.Model
+	area       textarea.Model   // multiline input for normal modes
+	input      textinput.Model  // single-line input for config (password) mode
 	remoteHost string
 	modelLabel string
 }
 
 func NewPrompt(mode PromptMode) *Prompt {
+	// textarea for normal multiline input
+	area := textarea.New()
+	area.Placeholder = getPromptPlaceholder(mode)
+	area.ShowLineNumbers = false
+	area.CharLimit = 4096
+	area.MaxHeight = 20
+	area.SetWidth(120)
+	area.SetHeight(1) // start as single line, grows with content
+	area.FocusedStyle.CursorLine = lipgloss.NewStyle() // no line highlight
+	area.FocusedStyle.Base = lipgloss.NewStyle()
+	area.BlurredStyle.Base = lipgloss.NewStyle()
+	area.Prompt = getPromptIcon(mode)
+	// Enter submits; Alt+Enter inserts newline
+	area.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter", "ctrl+j"))
+	area.Focus()
+
+	// textinput for config/password mode
 	input := textinput.New()
 	input.Placeholder = getPromptPlaceholder(mode)
 	input.TextStyle = getPromptStyle(mode)
 	input.Prompt = getPromptIcon(mode)
-
 	if mode == ConfigPromptMode {
 		input.EchoMode = textinput.EchoPassword
 	}
 
-	input.Focus()
-
 	return &Prompt{
 		mode:  mode,
+		area:  area,
 		input: input,
 	}
+}
+
+func (p *Prompt) isConfigMode() bool {
+	return p.mode == ConfigPromptMode
 }
 
 func (p *Prompt) GetMode() PromptMode {
@@ -51,16 +74,17 @@ func (p *Prompt) GetMode() PromptMode {
 func (p *Prompt) SetMode(mode PromptMode) *Prompt {
 	p.mode = mode
 
-	p.input.TextStyle = getPromptStyle(mode)
-	p.input.Placeholder = getPromptPlaceholder(mode)
-
 	if mode == ConfigPromptMode {
 		p.input.EchoMode = textinput.EchoPassword
+		p.input.TextStyle = getPromptStyle(mode)
+		p.input.Placeholder = getPromptPlaceholder(mode)
+		p.input.Prompt = getPromptIcon(mode)
+		p.input.Focus()
 	} else {
 		p.input.EchoMode = textinput.EchoNormal
+		p.area.Placeholder = getPromptPlaceholder(mode)
+		p.updatePromptIcon()
 	}
-
-	p.updatePromptIcon()
 
 	return p
 }
@@ -69,8 +93,9 @@ func (p *Prompt) SetRemoteHost(host string) *Prompt {
 	p.remoteHost = host
 	if host != "" && p.mode == AgentPromptMode {
 		style := getPromptStyle(AgentPromptMode)
-		p.input.Prompt = style.Render(fmt.Sprintf("🤖 %s > ", host))
-		p.input.Placeholder = fmt.Sprintf("Task for %s...", host)
+		prompt := style.Render(fmt.Sprintf("🤖 %s > ", host))
+		p.area.Prompt = prompt
+		p.area.Placeholder = fmt.Sprintf("Task for %s...", host)
 	}
 	return p
 }
@@ -92,14 +117,27 @@ func (p *Prompt) updatePromptIcon() {
 	}
 
 	if p.modelLabel != "" {
-		p.input.Prompt = style.Render(icon) + dimStyle.Render(fmt.Sprintf("[%s] ", p.modelLabel))
+		prompt := style.Render(icon) + dimStyle.Render(fmt.Sprintf("[%s] ", p.modelLabel))
+		p.area.Prompt = prompt
+		p.input.Prompt = prompt
 	} else {
-		p.input.Prompt = style.Render(icon)
+		prompt := style.Render(icon)
+		p.area.Prompt = prompt
+		p.input.Prompt = prompt
 	}
 }
 
+func (p *Prompt) SetWidth(w int) *Prompt {
+	p.area.SetWidth(w)
+	return p
+}
+
 func (p *Prompt) SetPlaceholder(text string) *Prompt {
-	p.input.Placeholder = text
+	if p.isConfigMode() {
+		p.input.Placeholder = text
+	} else {
+		p.area.Placeholder = text
+	}
 	return p
 }
 
@@ -109,32 +147,58 @@ func (p *Prompt) SetEchoMode(mode textinput.EchoMode) *Prompt {
 }
 
 func (p *Prompt) SetValue(value string) *Prompt {
-	p.input.SetValue(value)
+	if p.isConfigMode() {
+		p.input.SetValue(value)
+	} else {
+		p.area.SetValue(value)
+		// Auto-resize height based on content
+		p.autoResize()
+	}
 	return p
 }
 
 func (p *Prompt) GetValue() string {
-	return p.input.Value()
+	if p.isConfigMode() {
+		return p.input.Value()
+	}
+	return p.area.Value()
 }
 
 func (p *Prompt) Blur() *Prompt {
-	p.input.Blur()
+	if p.isConfigMode() {
+		p.input.Blur()
+	} else {
+		p.area.Blur()
+	}
 	return p
 }
 
 func (p *Prompt) Focus() *Prompt {
-	p.input.Focus()
+	if p.isConfigMode() {
+		p.input.Focus()
+	} else {
+		p.area.Focus()
+	}
 	return p
 }
 
 func (p *Prompt) Update(msg tea.Msg) (*Prompt, tea.Cmd) {
-	var updateCmd tea.Cmd
-	p.input, updateCmd = p.input.Update(msg)
-	return p, updateCmd
+	if p.isConfigMode() {
+		var cmd tea.Cmd
+		p.input, cmd = p.input.Update(msg)
+		return p, cmd
+	}
+	var cmd tea.Cmd
+	p.area, cmd = p.area.Update(msg)
+	p.autoResize()
+	return p, cmd
 }
 
 func (p *Prompt) View() string {
-	return p.input.View()
+	if p.isConfigMode() {
+		return p.input.View()
+	}
+	return p.area.View()
 }
 
 func (p *Prompt) AsString() string {
@@ -148,7 +212,36 @@ func (p *Prompt) AsString() string {
 	if p.modelLabel != "" {
 		prefix += dimStyle.Render(fmt.Sprintf("[%s] ", p.modelLabel))
 	}
-	return fmt.Sprintf("%s%s", prefix, style.Render(p.input.Value()))
+	value := p.GetValue()
+	// For multiline, show first line with prefix, indent continuation lines
+	lines := strings.Split(value, "\n")
+	if len(lines) <= 1 {
+		return fmt.Sprintf("%s%s", prefix, style.Render(value))
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%s%s", prefix, style.Render(lines[0])))
+	indent := strings.Repeat(" ", lipgloss.Width(prefix))
+	for _, line := range lines[1:] {
+		b.WriteString(fmt.Sprintf("\n%s%s", indent, style.Render(line)))
+	}
+	return b.String()
+}
+
+// autoResize adjusts the textarea height based on content line count.
+func (p *Prompt) autoResize() {
+	lines := strings.Count(p.area.Value(), "\n") + 1
+	if lines < 1 {
+		lines = 1
+	}
+	if lines > 20 {
+		lines = 20
+	}
+	p.area.SetHeight(lines)
+}
+
+// InputBlink returns the appropriate blink command for the current mode.
+func InputBlink() tea.Msg {
+	return textarea.Blink()
 }
 
 func getPromptStyle(mode PromptMode) lipgloss.Style {

@@ -14,8 +14,10 @@ import (
 	"github.com/ekkinox/yai/history"
 	"github.com/ekkinox/yai/run"
 	"github.com/ekkinox/yai/session"
+	"github.com/ekkinox/yai/skill"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
@@ -201,6 +203,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			glamour.WithAutoStyle(),
 			glamour.WithWordWrap(u.dimensions.width),
 		)
+		u.components.prompt.SetWidth(msg.Width)
 	// keyboard
 	case tea.KeyMsg:
 		switch msg.Type {
@@ -214,7 +217,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				u.components.prompt.Focus()
 				return u, tea.Sequence(
 					tea.Println(u.components.renderer.RenderWarning("\n[agent interrupted]\n")),
-					textinput.Blink,
+					textarea.Blink,
 				)
 			}
 			return u, tea.Quit
@@ -252,7 +255,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				u.engine.Reset()
 				u.components.prompt, promptCmd = u.components.prompt.Update(msg)
-				cmds = append(cmds, promptCmd, textinput.Blink)
+				cmds = append(cmds, promptCmd, textarea.Blink)
 			}
 		// enter
 		case tea.KeyEnter:
@@ -314,7 +317,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds,
 					promptCmd,
 					tea.Println(u.components.renderer.RenderContent(u.components.renderer.RenderHelpMessage())),
-					textinput.Blink,
+					textarea.Blink,
 				)
 			}
 
@@ -322,7 +325,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlL:
 			if !u.state.querying && !u.state.confirming {
 				u.components.prompt, promptCmd = u.components.prompt.Update(msg)
-				cmds = append(cmds, promptCmd, tea.ClearScreen, textinput.Blink)
+				cmds = append(cmds, promptCmd, tea.ClearScreen, textarea.Blink)
 			}
 
 		// reset
@@ -332,7 +335,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				u.engine.Reset()
 				u.components.prompt.SetValue("")
 				u.components.prompt, promptCmd = u.components.prompt.Update(msg)
-				cmds = append(cmds, promptCmd, tea.ClearScreen, textinput.Blink)
+				cmds = append(cmds, promptCmd, tea.ClearScreen, textarea.Blink)
 			}
 
 		// edit settings
@@ -382,7 +385,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							cmds,
 							promptCmd,
 							tea.Println(fmt.Sprintf("\n%s\n", u.components.renderer.RenderWarning("[cancel]"))),
-							textinput.Blink,
+							textarea.Blink,
 						)
 					} else {
 						return u, tea.Sequence(
@@ -396,7 +399,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				u.components.prompt.Focus()
 				u.components.prompt, promptCmd = u.components.prompt.Update(msg)
-				cmds = append(cmds, promptCmd, textinput.Blink)
+				cmds = append(cmds, promptCmd, textarea.Blink)
 			}
 		}
 	// engine exec feedback
@@ -425,7 +428,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		u.components.prompt, promptCmd = u.components.prompt.Update(msg)
 		return u, tea.Sequence(
 			promptCmd,
-			textinput.Blink,
+			textarea.Blink,
 			tea.Println(output),
 		)
 	// engine chat stream feedback
@@ -443,7 +446,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				return u, tea.Sequence(
 					tea.Println(output),
-					textinput.Blink,
+					textarea.Blink,
 				)
 			}
 		} else {
@@ -503,7 +506,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if u.state.runMode == CliMode {
 				return u, tea.Quit
 			}
-			return u, textinput.Blink
+			return u, textarea.Blink
 		}
 	// runner feedback
 	case run.RunOutput:
@@ -523,7 +526,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return u, tea.Sequence(
 				tea.Println(output),
 				promptCmd,
-				textinput.Blink,
+				textarea.Blink,
 			)
 		}
 	// errors
@@ -579,7 +582,7 @@ func (u *Ui) startRepl(cfg *config.Config) tea.Cmd {
 	return tea.Sequence(
 		tea.ClearScreen,
 		tea.Println(u.components.renderer.RenderContent(u.components.renderer.RenderHelpMessage())),
-		textinput.Blink,
+		textarea.Blink,
 		func() tea.Msg {
 			u.config = cfg
 
@@ -617,6 +620,18 @@ func (u *Ui) startRepl(cfg *config.Config) tea.Cmd {
 				info := engine.GetRemoteInfo()
 				remoteInfo := u.components.renderer.RenderRemoteInfo(u.state.remoteHost, info.Hostname, info.OS)
 				u.state.buffer += fmt.Sprintf("%s\n\n", remoteInfo)
+			}
+			// Show loaded skills
+			homeDir := cfg.GetSystemConfig().GetHomeDirectory()
+			if skills, _ := skill.LoadAll(homeDir); len(skills) > 0 {
+				u.state.buffer += u.components.renderer.RenderSkillsList(skills)
+			}
+			// Show memory status
+			if store := engine.GetMemoryStore(); store != nil {
+				msgs, sks, sess := store.Stats()
+				if msgs+sks+sess > 0 {
+					u.state.buffer += u.components.renderer.RenderMemoryStatus(msgs, sks, sess)
+				}
 			}
 			u.state.command = ""
 			u.components.prompt = NewPrompt(u.state.promptMode)
@@ -850,7 +865,7 @@ func (u *Ui) finishConfig() tea.Cmd {
 			tea.ClearScreen,
 			tea.Println(u.components.renderer.RenderSuccess("\n[settings ok]\n")),
 			tea.Println(u.components.renderer.RenderContent(providerInfo)),
-			textinput.Blink,
+			textarea.Blink,
 			func() tea.Msg {
 				u.state.buffer = ""
 				u.state.command = ""
@@ -1117,7 +1132,7 @@ func (u *Ui) finishIntegration() tea.Cmd {
 			}
 			return nil
 		},
-		textinput.Blink,
+		textarea.Blink,
 	)
 }
 
@@ -1344,6 +1359,7 @@ func (u *Ui) buildCommandContext() *command.Context {
 		ctx.ReloadIntegrationsFn = func() {
 			u.reloadIntegrations()
 		}
+		ctx.MemoryStore = u.engine.GetMemoryStore()
 	}
 	ctx.SessionList = func() []session.SessionInfo {
 		return u.listSessions()
@@ -1423,7 +1439,7 @@ func (u *Ui) handleSlashCommand(input string) tea.Cmd {
 		cmds = append(cmds, tea.Quit)
 	}
 
-	cmds = append(cmds, textinput.Blink)
+	cmds = append(cmds, textarea.Blink)
 	return tea.Sequence(cmds...)
 }
 
