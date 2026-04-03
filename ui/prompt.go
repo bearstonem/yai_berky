@@ -23,6 +23,7 @@ type Prompt struct {
 	mode       PromptMode
 	input      textinput.Model
 	remoteHost string
+	modelLabel string
 }
 
 func NewPrompt(mode PromptMode) *Prompt {
@@ -51,7 +52,6 @@ func (p *Prompt) SetMode(mode PromptMode) *Prompt {
 	p.mode = mode
 
 	p.input.TextStyle = getPromptStyle(mode)
-	p.input.Prompt = getPromptIcon(mode)
 	p.input.Placeholder = getPromptPlaceholder(mode)
 
 	if mode == ConfigPromptMode {
@@ -60,9 +60,7 @@ func (p *Prompt) SetMode(mode PromptMode) *Prompt {
 		p.input.EchoMode = textinput.EchoNormal
 	}
 
-	if p.remoteHost != "" && mode == AgentPromptMode {
-		p.SetRemoteHost(p.remoteHost)
-	}
+	p.updatePromptIcon()
 
 	return p
 }
@@ -75,6 +73,29 @@ func (p *Prompt) SetRemoteHost(host string) *Prompt {
 		p.input.Placeholder = fmt.Sprintf("Task for %s...", host)
 	}
 	return p
+}
+
+func (p *Prompt) SetModelLabel(model string) *Prompt {
+	p.modelLabel = model
+	p.updatePromptIcon()
+	return p
+}
+
+func (p *Prompt) updatePromptIcon() {
+	style := getPromptStyle(p.mode)
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(dim_color))
+
+	icon := getPromptIconRaw(p.mode)
+
+	if p.remoteHost != "" && p.mode == AgentPromptMode {
+		icon = fmt.Sprintf("🤖 %s > ", p.remoteHost)
+	}
+
+	if p.modelLabel != "" {
+		p.input.Prompt = style.Render(icon) + dimStyle.Render(fmt.Sprintf("[%s] ", p.modelLabel))
+	} else {
+		p.input.Prompt = style.Render(icon)
+	}
 }
 
 func (p *Prompt) SetPlaceholder(text string) *Prompt {
@@ -118,11 +139,16 @@ func (p *Prompt) View() string {
 
 func (p *Prompt) AsString() string {
 	style := getPromptStyle(p.mode)
-	icon := getPromptIcon(p.mode)
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(dim_color))
+	icon := getPromptIconRaw(p.mode)
 	if p.remoteHost != "" && p.mode == AgentPromptMode {
-		icon = style.Render(fmt.Sprintf("🤖 %s > ", p.remoteHost))
+		icon = fmt.Sprintf("🤖 %s > ", p.remoteHost)
 	}
-	return fmt.Sprintf("%s%s", icon, style.Render(p.input.Value()))
+	prefix := style.Render(icon)
+	if p.modelLabel != "" {
+		prefix += dimStyle.Render(fmt.Sprintf("[%s] ", p.modelLabel))
+	}
+	return fmt.Sprintf("%s%s", prefix, style.Render(p.input.Value()))
 }
 
 func getPromptStyle(mode PromptMode) lipgloss.Style {
@@ -138,19 +164,22 @@ func getPromptStyle(mode PromptMode) lipgloss.Style {
 	}
 }
 
-func getPromptIcon(mode PromptMode) string {
-	style := getPromptStyle(mode)
-
+func getPromptIconRaw(mode PromptMode) string {
 	switch mode {
 	case ExecPromptMode:
-		return style.Render(exec_icon)
+		return exec_icon
 	case ConfigPromptMode:
-		return style.Render(config_icon)
+		return config_icon
 	case AgentPromptMode:
-		return style.Render(agent_icon)
+		return agent_icon
 	default:
-		return style.Render(chat_icon)
+		return chat_icon
 	}
+}
+
+func getPromptIcon(mode PromptMode) string {
+	style := getPromptStyle(mode)
+	return style.Render(getPromptIconRaw(mode))
 }
 
 func getPromptPlaceholder(mode PromptMode) string {
