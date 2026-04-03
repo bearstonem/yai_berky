@@ -43,7 +43,7 @@ var ProviderDefaultModels = map[string]string{
 	ProviderOpenAI:     "gpt-4o-mini",
 	ProviderAnthropic:  "claude-sonnet-4-6",
 	ProviderOpenRouter: "openai/gpt-4o-mini",
-	ProviderMiniMax:    "MiniMax-M2",
+	ProviderMiniMax:    "MiniMax-M2.7",
 	ProviderOllama:     "llama3.2",
 	ProviderLlamaCpp:   "default",
 	ProviderLMStudio:   "default",

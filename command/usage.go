@@ -15,6 +15,11 @@ var modelPricing = map[string][2]float64{
 	"gpt-3.5-turbo":   {0.50, 1.50},
 	"o1":              {15.00, 60.00},
 	"o1-mini":         {3.00, 12.00},
+	// MiniMax
+	"MiniMax-M2.7":           {0.30, 1.20},
+	"MiniMax-M2.7-highspeed": {0.30, 1.20},
+	"MiniMax-M2.5":           {0.30, 1.20},
+	"MiniMax-M2":             {0.30, 1.20},
 	// Anthropic
 	"claude-opus-4-6":       {15.00, 75.00},
 	"claude-sonnet-4-6":     {3.00, 15.00},

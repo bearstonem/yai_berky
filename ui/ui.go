@@ -1059,6 +1059,9 @@ func (u *Ui) buildCommandContext() *command.Context {
 		}
 		ctx.SetModelFn = func(model string) {
 			u.engine.SetModel(model)
+			if u.usageTracker != nil {
+				u.usageTracker.SetModel(model)
+			}
 		}
 		ctx.SwitchProvider = func(provider, apiKey, baseURL string) error {
 			return u.engine.SwitchProvider(provider, apiKey, baseURL)
