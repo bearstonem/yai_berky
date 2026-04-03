@@ -235,13 +235,18 @@ func cmdModel(args string, ctx *Context) Result {
 
 		// Switch provider
 		if ctx.SwitchProvider != nil {
-			apiKey := ""
+			fallbackKey := ""
 			baseURL := ""
 			if ctx.Config != nil {
-				apiKey = ctx.Config.GetAiConfig().GetKey()
+				fallbackKey = ctx.Config.GetAiConfig().GetKey()
 				if defaultURL, ok := config.ProviderBaseURLs[provider]; ok {
 					baseURL = defaultURL
 				}
+			}
+			apiKey := config.ResolveAPIKey(provider, fallbackKey)
+			if apiKey == "" && config.ProviderNeedsAPIKey(provider) {
+				envVar := config.ProviderEnvKeys[provider]
+				return Result{Output: fmt.Sprintf("No API key for `%s`. Set `%s` env var or configure it in settings.", provider, envVar), IsError: true}
 			}
 			if err := ctx.SwitchProvider(provider, apiKey, baseURL); err != nil {
 				return Result{Output: fmt.Sprintf("Failed to switch provider: %s", err), IsError: true}

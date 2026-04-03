@@ -1,5 +1,7 @@
 package config
 
+import "os"
+
 const (
 	// New provider-agnostic keys
 	ai_provider    = "AI_PROVIDER"
@@ -59,6 +61,26 @@ var ProviderDisplayNames = map[string]string{
 	ProviderLlamaCpp:   "llama.cpp (local)",
 	ProviderLMStudio:   "LM Studio (local)",
 	ProviderCustom:     "Custom (OpenAI-compatible)",
+}
+
+// ProviderEnvKeys maps providers to environment variable names for API keys.
+// These are checked first when resolving a key for a provider at runtime.
+var ProviderEnvKeys = map[string]string{
+	ProviderOpenAI:     "OPENAI_API_KEY",
+	ProviderAnthropic:  "ANTHROPIC_API_KEY",
+	ProviderOpenRouter: "OPENROUTER_API_KEY",
+	ProviderMiniMax:    "MINIMAX_API_KEY",
+}
+
+// ResolveAPIKey returns the best API key for the given provider.
+// Priority: provider-specific env var → fallback key (from config).
+func ResolveAPIKey(provider string, fallbackKey string) string {
+	if envVar, ok := ProviderEnvKeys[provider]; ok {
+		if val := os.Getenv(envVar); val != "" {
+			return val
+		}
+	}
+	return fallbackKey
 }
 
 func ProviderNeedsAPIKey(provider string) bool {

@@ -88,28 +88,14 @@ func newToolExecutorWithHooks(allowSudo bool, homeDir, workDir string, permMode 
 
 func buildProvider(cfg *config.Config) (Provider, error) {
 	aiCfg := cfg.GetAiConfig()
+	provider := aiCfg.GetProvider()
+	apiKey := config.ResolveAPIKey(provider, aiCfg.GetKey())
 
-	switch aiCfg.GetProvider() {
+	switch provider {
 	case config.ProviderAnthropic:
-		return NewAnthropicProvider(aiCfg.GetKey()), nil
-
-	case config.ProviderOpenAI, config.ProviderOpenRouter, config.ProviderMiniMax,
-		config.ProviderOllama, config.ProviderLlamaCpp, config.ProviderLMStudio, config.ProviderCustom:
-
-		apiKey := aiCfg.GetKey()
-		if apiKey == "" {
-			apiKey = "no-key"
-		}
-
-		return NewOpenAIProvider(OpenAIProviderConfig{
-			APIKey:  apiKey,
-			BaseURL: aiCfg.GetEffectiveBaseURL(),
-			Proxy:   aiCfg.GetProxy(),
-			Name:    aiCfg.GetProvider(),
-		})
+		return NewAnthropicProvider(apiKey), nil
 
 	default:
-		apiKey := aiCfg.GetKey()
 		if apiKey == "" {
 			apiKey = "no-key"
 		}
@@ -117,7 +103,7 @@ func buildProvider(cfg *config.Config) (Provider, error) {
 			APIKey:  apiKey,
 			BaseURL: aiCfg.GetEffectiveBaseURL(),
 			Proxy:   aiCfg.GetProxy(),
-			Name:    aiCfg.GetProvider(),
+			Name:    provider,
 		})
 	}
 }
