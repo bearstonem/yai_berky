@@ -66,6 +66,10 @@ var ToolPermissions = map[string]ToolPermission{
 func IsToolAllowed(toolName string, mode PermissionMode) bool {
 	perm, ok := ToolPermissions[toolName]
 	if !ok {
+		// Integration tools are allowed in workspace-write mode.
+		if len(toolName) > 12 && toolName[:12] == "integration_" {
+			return mode >= PermWorkspaceWrite
+		}
 		// Unknown tools require full access.
 		return mode >= PermFullAccess
 	}

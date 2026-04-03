@@ -14,6 +14,7 @@ type UserConfig struct {
 	agentAutoExecute  bool
 	permissionMode    PermissionMode
 	hooks             []HookConfig
+	integrations      []IntegrationConfig
 }
 
 func (c UserConfig) GetDefaultPromptMode() string {
@@ -38,4 +39,8 @@ func (c UserConfig) GetPermissionMode() PermissionMode {
 
 func (c UserConfig) GetHooks() []HookConfig {
 	return c.hooks
+}
+
+func (c UserConfig) GetIntegrations() []IntegrationConfig {
+	return c.integrations
 }

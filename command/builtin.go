@@ -92,6 +92,13 @@ func RegisterBuiltins(r *Registry) {
 		Description: "Show recent git log",
 		Handler:     cmdLog,
 	})
+
+	r.Register(&Command{
+		Name:        "integrate",
+		Aliases:     []string{"int"},
+		Description: "Manage tool integrations (ComfyUI, webhooks, etc.)",
+		Handler:     cmdIntegrate,
+	})
 }
 
 func cmdHelp(_ string, ctx *Context) Result {
@@ -110,6 +117,7 @@ func cmdHelp(_ string, ctx *Context) Result {
 		{"/mode [exec|chat|agent]", "Show or switch mode"},
 		{"/model [provider/model]", "Show or switch model"},
 		{"/yolo", "Toggle yolo mode (auto-execute agent tools)"},
+		{"/integrate", "Manage tool integrations (add/remove/list)"},
 		{"/diff", "Show git diff of working tree"},
 		{"/commit <message>", "Stage all and commit"},
 		{"/status", "Show git status"},
@@ -296,6 +304,82 @@ func cmdYolo(args string, ctx *Context) Result {
 		return Result{Output: "yolo:on"}
 	}
 	return Result{Output: "yolo:off"}
+}
+
+func cmdIntegrate(args string, ctx *Context) Result {
+	args = strings.TrimSpace(args)
+
+	if args == "" || args == "list" || args == "ls" {
+		integrations := config.LoadIntegrationsFromViper()
+		if len(integrations) == 0 {
+			return Result{Output: "No integrations configured.\n\nUse `/integrate add` to set one up."}
+		}
+
+		out := "**Tool Integrations**\n\n"
+		out += "| Name | Type | Endpoint | Enabled |\n"
+		out += "|---|---|---|---|\n"
+		for _, ic := range integrations {
+			enabled := "yes"
+			if !ic.Enabled {
+				enabled = "no"
+			}
+			out += fmt.Sprintf("| `%s` | %s | `%s` | %s |\n", ic.Name, string(ic.Type), ic.Endpoint, enabled)
+		}
+		out += "\n**Commands:** `/integrate add`, `/integrate remove <name>`, `/integrate toggle <name>`"
+		return Result{Output: out}
+	}
+
+	parts := strings.SplitN(args, " ", 2)
+	subCmd := strings.ToLower(parts[0])
+	subArgs := ""
+	if len(parts) > 1 {
+		subArgs = strings.TrimSpace(parts[1])
+	}
+
+	switch subCmd {
+	case "add":
+		return Result{Output: "integrate:add"}
+
+	case "remove", "rm", "delete":
+		if subArgs == "" {
+			return Result{Output: "Usage: `/integrate remove <name>`", IsError: true}
+		}
+		if config.RemoveIntegration(subArgs) {
+			if ctx.ReloadIntegrationsFn != nil {
+				ctx.ReloadIntegrationsFn()
+			}
+			return Result{Output: fmt.Sprintf("Removed integration `%s`.", subArgs)}
+		}
+		return Result{Output: fmt.Sprintf("Integration `%s` not found.", subArgs), IsError: true}
+
+	case "toggle":
+		if subArgs == "" {
+			return Result{Output: "Usage: `/integrate toggle <name>`", IsError: true}
+		}
+		integrations := config.LoadIntegrationsFromViper()
+		found := false
+		for i := range integrations {
+			if integrations[i].Name == subArgs {
+				integrations[i].Enabled = !integrations[i].Enabled
+				config.SaveIntegrationsToViper(integrations)
+				status := "enabled"
+				if !integrations[i].Enabled {
+					status = "disabled"
+				}
+				if ctx.ReloadIntegrationsFn != nil {
+					ctx.ReloadIntegrationsFn()
+				}
+				return Result{Output: fmt.Sprintf("Integration `%s` is now **%s**.", subArgs, status)}
+			}
+		}
+		if !found {
+			return Result{Output: fmt.Sprintf("Integration `%s` not found.", subArgs), IsError: true}
+		}
+		return Result{}
+
+	default:
+		return Result{Output: "Usage: `/integrate [add|remove|toggle|list]`", IsError: true}
+	}
 }
 
 func cmdMode(args string, ctx *Context) Result {

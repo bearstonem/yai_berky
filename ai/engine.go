@@ -10,6 +10,7 @@ import (
 
 	"github.com/ekkinox/yai/config"
 	"github.com/ekkinox/yai/hook"
+	"github.com/ekkinox/yai/integration"
 	"github.com/ekkinox/yai/run"
 	"github.com/ekkinox/yai/session"
 	"github.com/ekkinox/yai/system"
@@ -72,16 +73,19 @@ func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
 		channel:       make(chan EngineChatStreamOutput),
 		agentChannel:  make(chan AgentEvent),
 		approvalChan:  make(chan bool),
-		toolExecutor:  newToolExecutorWithHooks(allowSudo, homeDir, workDir, permMode, cfg.GetUserConfig().GetHooks()),
+		toolExecutor:  newToolExecutorWithHooksAndIntegrations(allowSudo, homeDir, workDir, permMode, cfg.GetUserConfig().GetHooks(), cfg.GetUserConfig().GetIntegrations()),
 		pipe:          "",
 		running:       false,
 	}, nil
 }
 
-func newToolExecutorWithHooks(allowSudo bool, homeDir, workDir string, permMode config.PermissionMode, hooks []config.HookConfig) *ToolExecutor {
+func newToolExecutorWithHooksAndIntegrations(allowSudo bool, homeDir, workDir string, permMode config.PermissionMode, hooks []config.HookConfig, integrations []config.IntegrationConfig) *ToolExecutor {
 	te := NewToolExecutor(allowSudo, homeDir, workDir, permMode)
 	if len(hooks) > 0 {
 		te.SetHookRunner(hook.NewRunner(hooks, workDir))
+	}
+	if len(integrations) > 0 {
+		te.SetIntegrations(integration.BuildTools(integrations))
 	}
 	return te
 }
@@ -228,6 +232,14 @@ func (e *Engine) SwitchProvider(provider string, apiKey string, baseURL string) 
 	}
 	e.provider = p
 	return nil
+}
+
+func (e *Engine) ReloadIntegrations(integrations []config.IntegrationConfig) {
+	if len(integrations) > 0 {
+		e.toolExecutor.SetIntegrations(integration.BuildTools(integrations))
+	} else {
+		e.toolExecutor.SetIntegrations(nil)
+	}
 }
 
 func (e *Engine) SetOnUsage(fn func(inputTokens, outputTokens int)) {
@@ -719,7 +731,7 @@ func (e *Engine) AgentCompletion(input string, autoExecute bool) error {
 			MaxTokens:   e.config.GetAiConfig().GetMaxTokens(),
 			Temperature: e.config.GetAiConfig().GetTemperature(),
 			Messages:    e.prepareCompletionMessages(),
-			Tools:       AgentTools(),
+			Tools:       e.toolExecutor.AllTools(),
 		}
 
 		resp, err := e.provider.CompleteWithTools(ctx, req)

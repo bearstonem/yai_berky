@@ -22,4 +22,6 @@ type Context struct {
 	GetModelFn     func() string
 	SetModelFn     func(string)
 	SwitchProvider func(provider, apiKey, baseURL string) error
+	// Integration management
+	ReloadIntegrationsFn func()
 }

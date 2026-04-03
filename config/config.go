@@ -104,6 +104,7 @@ func NewConfig() (*Config, error) {
 			agentAutoExecute:  viper.GetBool(user_agent_auto_execute),
 			permissionMode:    PermissionModeFromString(viper.GetString(user_permission_mode)),
 			hooks:             LoadHooksFromViper(),
+			integrations:      LoadIntegrationsFromViper(),
 		},
 		system: sys,
 	}, nil
