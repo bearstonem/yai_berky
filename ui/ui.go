@@ -8,9 +8,11 @@ import (
 	"strings"
 
 	"github.com/ekkinox/yai/ai"
+	"github.com/ekkinox/yai/command"
 	"github.com/ekkinox/yai/config"
 	"github.com/ekkinox/yai/history"
 	"github.com/ekkinox/yai/run"
+	"github.com/ekkinox/yai/session"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -66,12 +68,14 @@ type UiComponents struct {
 }
 
 type Ui struct {
-	state      UiState
-	dimensions UiDimensions
-	components UiComponents
-	config     *config.Config
-	engine     *ai.Engine
-	history    *history.History
+	state        UiState
+	dimensions   UiDimensions
+	components   UiComponents
+	config       *config.Config
+	engine       *ai.Engine
+	history      *history.History
+	commands     *command.Registry
+	usageTracker *command.UsageTracker
 }
 
 func NewUi(input *UiInput) *Ui {
@@ -79,6 +83,9 @@ func NewUi(input *UiInput) *Ui {
 	if input.GetRemote() != "" {
 		prompt.SetRemoteHost(input.GetRemote())
 	}
+
+	cmds := command.NewRegistry()
+	command.RegisterBuiltins(cmds)
 
 	return &Ui{
 		state: UiState{
@@ -109,7 +116,8 @@ func NewUi(input *UiInput) *Ui {
 			),
 			spinner: NewSpinner(),
 		},
-		history: history.NewHistory(),
+		history:  history.NewHistory(),
+		commands: cmds,
 	}
 }
 
@@ -230,6 +238,14 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !u.state.querying && !u.state.confirming && !u.state.agentRunning {
 				input := u.components.prompt.GetValue()
 				if input != "" {
+					// Slash command dispatch
+					if strings.HasPrefix(strings.TrimSpace(input), "/") {
+						u.history.Add(input)
+						u.components.prompt.SetValue("")
+						u.components.prompt, promptCmd = u.components.prompt.Update(msg)
+						return u, tea.Sequence(promptCmd, u.handleSlashCommand(input))
+					}
+
 					inputPrint := u.components.prompt.AsString()
 					u.history.Add(input)
 					u.components.prompt.SetValue("")
@@ -358,6 +374,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	// engine exec feedback
 	case ai.EngineExecOutput:
+		u.autoSaveSession()
 		var output string
 		if msg.IsExecutable() {
 			u.state.confirming = true
@@ -387,6 +404,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// engine chat stream feedback
 	case ai.EngineChatStreamOutput:
 		if msg.IsLast() {
+			u.autoSaveSession()
 			output := u.components.renderer.RenderContent(u.state.buffer)
 			u.state.buffer = ""
 			u.components.prompt.Focus()
@@ -453,6 +471,7 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case ai.AgentEventDone:
 			u.state.agentRunning = false
 			u.state.querying = false
+			u.autoSaveSession()
 			u.components.prompt.Focus()
 			if u.state.runMode == CliMode {
 				return u, tea.Quit
@@ -559,6 +578,11 @@ func (u *Ui) startRepl(cfg *config.Config) tea.Cmd {
 			}
 
 			u.engine = engine
+			u.engine.StartNewSession()
+			u.usageTracker = command.NewUsageTracker(cfg.GetAiConfig().GetModel())
+			u.engine.SetOnUsage(func(in, out int) {
+				u.usageTracker.Add(in, out)
+			})
 
 			providerInfo := u.components.renderer.RenderProviderInfo(cfg.GetAiConfig())
 			u.state.buffer = fmt.Sprintf("%s\n\n", providerInfo)
@@ -605,6 +629,11 @@ func (u *Ui) startCli(cfg *config.Config) tea.Cmd {
 	}
 
 	u.engine = engine
+	u.engine.StartNewSession()
+	u.usageTracker = command.NewUsageTracker(cfg.GetAiConfig().GetModel())
+	u.engine.SetOnUsage(func(in, out int) {
+		u.usageTracker.Add(in, out)
+	})
 	u.state.querying = true
 	u.state.confirming = false
 	u.state.buffer = ""
@@ -997,6 +1026,104 @@ func (u *Ui) execCommand(input string) tea.Cmd {
 
 		return run.NewRunOutput(error, "[error]", "[ok]")
 	})
+}
+
+func (u *Ui) buildCommandContext() *command.Context {
+	ctx := &command.Context{
+		Config:       u.config,
+		Mode:         u.state.promptMode.String(),
+		UsageTracker: u.usageTracker,
+	}
+	if u.config != nil {
+		ctx.HomeDir = u.config.GetSystemConfig().GetHomeDirectory()
+		ctx.WorkDir = u.config.GetSystemConfig().GetWorkspaceRoot()
+		if ctx.WorkDir == "" {
+			ctx.WorkDir = u.config.GetSystemConfig().GetCurrentDirectory()
+		}
+	}
+	if u.engine != nil {
+		if s := u.engine.GetSession(); s != nil {
+			ctx.SessionID = s.ID
+		}
+		ctx.ResetFn = func() {
+			u.engine.Reset()
+		}
+	}
+	ctx.SessionList = func() []session.SessionInfo {
+		return u.listSessions()
+	}
+	return ctx
+}
+
+func (u *Ui) handleSlashCommand(input string) tea.Cmd {
+	name, args := command.Parse(input)
+	cmd := u.commands.Get(name)
+	if cmd == nil {
+		return tea.Println(u.components.renderer.RenderError(fmt.Sprintf("Unknown command: /%s. Type /help for a list.", name)))
+	}
+
+	result := cmd.Handler(args, u.buildCommandContext())
+
+	var cmds []tea.Cmd
+
+	// Handle mode switch
+	if strings.HasPrefix(result.Output, "switch:") {
+		newMode := strings.TrimPrefix(result.Output, "switch:")
+		switch newMode {
+		case "exec":
+			u.state.promptMode = ExecPromptMode
+			u.components.prompt.SetMode(ExecPromptMode)
+			u.engine.SetMode(ai.ExecEngineMode)
+		case "chat":
+			u.state.promptMode = ChatPromptMode
+			u.components.prompt.SetMode(ChatPromptMode)
+			u.engine.SetMode(ai.ChatEngineMode)
+		case "agent":
+			u.state.promptMode = AgentPromptMode
+			u.components.prompt.SetMode(AgentPromptMode)
+			u.engine.SetMode(ai.AgentEngineMode)
+		}
+		u.engine.Reset()
+		u.engine.StartNewSession()
+		return tea.Println(u.components.renderer.RenderSuccess(fmt.Sprintf("[switched to %s mode]", newMode)))
+	}
+
+	if result.Clear {
+		cmds = append(cmds, tea.ClearScreen)
+	}
+
+	if result.Reset {
+		u.history.Reset()
+	}
+
+	if result.Output != "" {
+		if result.IsError {
+			cmds = append(cmds, tea.Println(u.components.renderer.RenderError(result.Output)))
+		} else {
+			cmds = append(cmds, tea.Println(u.components.renderer.RenderContent(result.Output)))
+		}
+	}
+
+	if result.Quit {
+		cmds = append(cmds, tea.Quit)
+	}
+
+	cmds = append(cmds, textinput.Blink)
+	return tea.Sequence(cmds...)
+}
+
+func (u *Ui) autoSaveSession() {
+	if u.engine != nil && u.config != nil {
+		u.engine.SaveSession(u.config.GetSystemConfig().GetHomeDirectory())
+	}
+}
+
+func (u *Ui) listSessions() []session.SessionInfo {
+	if u.config == nil {
+		return nil
+	}
+	infos, _ := session.List(u.config.GetSystemConfig().GetHomeDirectory())
+	return infos
 }
 
 func (u *Ui) editSettings() tea.Cmd {

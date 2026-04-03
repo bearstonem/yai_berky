@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/ekkinox/yai/config"
+	"github.com/ekkinox/yai/hook"
 	"github.com/ekkinox/yai/run"
+	"github.com/ekkinox/yai/session"
 	"github.com/ekkinox/yai/system"
 )
 
@@ -41,6 +43,8 @@ type Engine struct {
 	cancelFn      context.CancelFunc
 	remoteHost    string
 	remoteInfo    *RemoteSystemInfo
+	session       *session.Session
+	onUsage       func(inputTokens, outputTokens int)
 }
 
 func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
@@ -55,6 +59,7 @@ func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
 		workDir = cfg.GetSystemConfig().GetCurrentDirectory()
 	}
 	allowSudo := cfg.GetUserConfig().GetAllowSudo()
+	permMode := cfg.GetUserConfig().GetPermissionMode()
 
 	return &Engine{
 		mode:          mode,
@@ -66,10 +71,18 @@ func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
 		channel:       make(chan EngineChatStreamOutput),
 		agentChannel:  make(chan AgentEvent),
 		approvalChan:  make(chan bool),
-		toolExecutor:  NewToolExecutor(allowSudo, homeDir, workDir),
+		toolExecutor:  newToolExecutorWithHooks(allowSudo, homeDir, workDir, permMode, cfg.GetUserConfig().GetHooks()),
 		pipe:          "",
 		running:       false,
 	}, nil
+}
+
+func newToolExecutorWithHooks(allowSudo bool, homeDir, workDir string, permMode config.PermissionMode, hooks []config.HookConfig) *ToolExecutor {
+	te := NewToolExecutor(allowSudo, homeDir, workDir, permMode)
+	if len(hooks) > 0 {
+		te.SetHookRunner(hook.NewRunner(hooks, workDir))
+	}
+	return te
 }
 
 func buildProvider(cfg *config.Config) (Provider, error) {
@@ -192,6 +205,16 @@ func probeRemoteSystem(host string) (*RemoteSystemInfo, error) {
 	return info, nil
 }
 
+func (e *Engine) SetOnUsage(fn func(inputTokens, outputTokens int)) {
+	e.onUsage = fn
+}
+
+func (e *Engine) reportUsage(input, output int) {
+	if e.onUsage != nil && (input > 0 || output > 0) {
+		e.onUsage(input, output)
+	}
+}
+
 func (e *Engine) SetPipe(pipe string) *Engine {
 	e.pipe = pipe
 	return e
@@ -238,6 +261,115 @@ func (e *Engine) Reset() *Engine {
 	return e
 }
 
+// Session management
+
+func (e *Engine) GetSession() *session.Session {
+	return e.session
+}
+
+func (e *Engine) SetSession(s *session.Session) {
+	e.session = s
+}
+
+func (e *Engine) StartNewSession() {
+	mode := "exec"
+	switch e.mode {
+	case ChatEngineMode:
+		mode = "chat"
+	case AgentEngineMode:
+		mode = "agent"
+	}
+	e.session = session.NewSession(mode)
+}
+
+// SaveSession persists the current session to disk. Call after each interaction.
+func (e *Engine) SaveSession(homeDir string) error {
+	if e.session == nil {
+		return nil
+	}
+	e.session.Messages = e.exportMessages()
+	e.session.Mode = e.modeString()
+	return e.session.Save(homeDir)
+}
+
+// LoadSession restores messages from a saved session.
+func (e *Engine) LoadSession(homeDir, id string) error {
+	s, err := session.Load(homeDir, id)
+	if err != nil {
+		return err
+	}
+	e.session = s
+	e.importMessages(s.Messages)
+	return nil
+}
+
+func (e *Engine) modeString() string {
+	switch e.mode {
+	case ChatEngineMode:
+		return "chat"
+	case AgentEngineMode:
+		return "agent"
+	default:
+		return "exec"
+	}
+}
+
+func (e *Engine) exportMessages() []session.Message {
+	var msgs []Message
+	switch e.mode {
+	case ExecEngineMode:
+		msgs = e.execMessages
+	case AgentEngineMode:
+		msgs = e.agentMessages
+	default:
+		msgs = e.chatMessages
+	}
+
+	out := make([]session.Message, len(msgs))
+	for i, m := range msgs {
+		out[i] = session.Message{
+			Role:       m.Role,
+			Content:    m.Content,
+			ToolCallID: m.ToolCallID,
+		}
+		for _, tc := range m.ToolCalls {
+			out[i].ToolCalls = append(out[i].ToolCalls, session.ToolCall{
+				ID:        tc.ID,
+				Name:      tc.Name,
+				Arguments: tc.Arguments,
+			})
+		}
+	}
+	return out
+}
+
+func (e *Engine) importMessages(msgs []session.Message) {
+	converted := make([]Message, len(msgs))
+	for i, m := range msgs {
+		converted[i] = Message{
+			Role:       m.Role,
+			Content:    m.Content,
+			ToolCallID: m.ToolCallID,
+		}
+		for _, tc := range m.ToolCalls {
+			converted[i].ToolCalls = append(converted[i].ToolCalls, ToolCall{
+				ID:        tc.ID,
+				Name:      tc.Name,
+				Arguments: tc.Arguments,
+			})
+		}
+	}
+
+	switch e.mode {
+	case ExecEngineMode:
+		e.execMessages = converted
+	case AgentEngineMode:
+		e.agentMessages = converted
+	default:
+		e.chatMessages = converted
+	}
+}
+
 func (e *Engine) ExecCompletion(input string) (*EngineExecOutput, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancelFn = cancel
@@ -257,6 +389,9 @@ func (e *Engine) ExecCompletion(input string) (*EngineExecOutput, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	u := e.provider.LastUsage()
+	e.reportUsage(u.InputTokens, u.OutputTokens)
 
 	e.appendAssistantMessage(content)
 
@@ -570,6 +705,9 @@ func (e *Engine) AgentCompletion(input string, autoExecute bool) error {
 			return err
 		}
 
+		u := e.provider.LastUsage()
+		e.reportUsage(u.InputTokens, u.OutputTokens)
+
 		// If the model produced malformed tool-call JSON, don't persist it in history.
 		// Instead, ask it to retry with a valid JSON tool call.
 		cleanResp, dropped := sanitizeToolCalls(resp)
@@ -709,6 +847,12 @@ func (e *Engine) prepareSystemPromptContextPart() string {
 
 	if e.config.GetUserConfig().GetPreferences() != "" {
 		part += fmt.Sprintf("Also, %s.", e.config.GetUserConfig().GetPreferences())
+	}
+
+	// Inject instruction files (YAI.md) discovered from the workspace.
+	instructions := system.DiscoverInstructions(workDir)
+	if instructions != "" {
+		part += "\n\n# Project Instructions (from YAI.md)\n\n" + instructions
 	}
 
 	return part
