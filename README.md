@@ -114,6 +114,32 @@ The input field supports multiline text:
 - **Alt+Enter** or **Ctrl+J** -- insert a newline
 - **Ctrl+V** -- paste from clipboard (multiline supported)
 
+### Pipe Mode (Non-Interactive)
+
+Use `--pipe` for headless, non-interactive operation. This bypasses the TUI entirely -- input comes from command-line args, output goes to stdout as plain text. Agent mode auto-executes all tools without confirmation.
+
+This makes yai usable as a tool by other AI agents, scripts, and CI pipelines.
+
+```shell
+# Agent mode -- auto-executes tools, prints final answer to stdout
+yai --pipe -a "find all TODO comments in this project"
+
+# Chat mode -- plain text response to stdout
+yai --pipe -c "explain what a goroutine is"
+
+# Exec mode -- prints just the command
+yai --pipe -e "list docker containers"
+
+# Pipe stdin
+echo "refactor this function" | yai --pipe -a
+
+# Use in scripts
+COMMAND=$(yai --pipe -e "compress all png files in current dir")
+echo "Would run: $COMMAND"
+```
+
+Diagnostic output (thinking, tool calls, results) goes to stderr, so stdout contains only the final answer. This means you can safely pipe or capture the output.
+
 ### Remote Mode
 
 Use `--remote` to run agent mode on a remote machine via SSH. Yai stays on your local machine -- all commands, file reads, and writes tunnel through SSH automatically. No install needed on the remote host.
@@ -189,6 +215,10 @@ yai -c explain what a goroutine is
 
 # One-shot agent mode
 yai -a refactor the logging in this project
+
+# Pipe mode (no TUI, plain text I/O, agent auto-executes)
+yai --pipe -a "create a hello world web server"
+yai --pipe -c "what is a mutex" > answer.txt
 
 # Agent on a remote host
 yai --remote user@host deploy the latest build

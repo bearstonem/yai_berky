@@ -32,6 +32,8 @@ func NewConfig() (*Config, error) {
 	viper.SetConfigName(strings.ToLower(sys.GetApplicationName()))
 	viper.AddConfigPath(fmt.Sprintf("%s/.config/", sys.GetHomeDirectory()))
 
+	viper.AutomaticEnv()
+
 	if err := viper.ReadInConfig(); err != nil {
 		return nil, err
 	}
