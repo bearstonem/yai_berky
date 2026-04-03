@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ekkinox/yai/config"
+	"github.com/ekkinox/yai/hook"
 	"github.com/ekkinox/yai/run"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,7 +33,7 @@ func TestAgentTools(t *testing.T) {
 }
 
 func TestToolExecutorRunCommand(t *testing.T) {
-	te := NewToolExecutor(false, "/tmp", "/tmp")
+	te := NewToolExecutor(false, "/tmp", "/tmp", config.PermFullAccess)
 
 	t.Run("successful command", func(t *testing.T) {
 		tc := ToolCall{
@@ -66,7 +68,7 @@ func TestToolExecutorRunCommand(t *testing.T) {
 	})
 
 	t.Run("sudo allowed", func(t *testing.T) {
-		teSudo := NewToolExecutor(true, "/tmp", "/tmp")
+		teSudo := NewToolExecutor(true, "/tmp", "/tmp", config.PermFullAccess)
 		tc := ToolCall{
 			ID:        "call_4",
 			Name:      "run_command",
@@ -78,7 +80,7 @@ func TestToolExecutorRunCommand(t *testing.T) {
 }
 
 func TestToolExecutorReadFile(t *testing.T) {
-	te := NewToolExecutor(false, "/tmp", "/tmp")
+	te := NewToolExecutor(false, "/tmp", "/tmp", config.PermFullAccess)
 
 	tmpFile := filepath.Join(t.TempDir(), "test.txt")
 	err := os.WriteFile(tmpFile, []byte("file content"), 0644)
@@ -106,7 +108,7 @@ func TestToolExecutorReadFile(t *testing.T) {
 }
 
 func TestToolExecutorListDirectory(t *testing.T) {
-	te := NewToolExecutor(false, "/tmp", "/tmp")
+	te := NewToolExecutor(false, "/tmp", "/tmp", config.PermFullAccess)
 
 	dir := t.TempDir()
 	err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0644)
@@ -125,7 +127,7 @@ func TestToolExecutorListDirectory(t *testing.T) {
 }
 
 func TestToolExecutorWriteFile(t *testing.T) {
-	te := NewToolExecutor(false, "/tmp", "/tmp")
+	te := NewToolExecutor(false, "/tmp", "/tmp", config.PermFullAccess)
 
 	outFile := filepath.Join(t.TempDir(), "output.txt")
 
@@ -143,7 +145,7 @@ func TestToolExecutorWriteFile(t *testing.T) {
 }
 
 func TestToolExecutorWriteFileBase64(t *testing.T) {
-	te := NewToolExecutor(false, "/tmp", "/tmp")
+	te := NewToolExecutor(false, "/tmp", "/tmp", config.PermFullAccess)
 
 	outFile := filepath.Join(t.TempDir(), "output_b64.txt")
 
@@ -162,7 +164,7 @@ func TestToolExecutorWriteFileBase64(t *testing.T) {
 }
 
 func TestToolExecutorWriteFileLines(t *testing.T) {
-	te := NewToolExecutor(false, "/tmp", "/tmp")
+	te := NewToolExecutor(false, "/tmp", "/tmp", config.PermFullAccess)
 
 	outFile := filepath.Join(t.TempDir(), "output_lines.txt")
 
@@ -180,7 +182,7 @@ func TestToolExecutorWriteFileLines(t *testing.T) {
 }
 
 func TestToolExecutorUnknownTool(t *testing.T) {
-	te := NewToolExecutor(false, "/tmp", "/tmp")
+	te := NewToolExecutor(false, "/tmp", "/tmp", config.PermFullAccess)
 
 	tc := ToolCall{
 		ID:        "call_9",
@@ -192,7 +194,7 @@ func TestToolExecutorUnknownTool(t *testing.T) {
 }
 
 func TestToolExecutorBadJSON(t *testing.T) {
-	te := NewToolExecutor(false, "/tmp", "/tmp")
+	te := NewToolExecutor(false, "/tmp", "/tmp", config.PermFullAccess)
 
 	tc := ToolCall{
 		ID:        "call_10",
@@ -204,7 +206,7 @@ func TestToolExecutorBadJSON(t *testing.T) {
 }
 
 func TestToolExecutorRemoteFlag(t *testing.T) {
-	te := NewToolExecutor(false, "/tmp", "/tmp")
+	te := NewToolExecutor(false, "/tmp", "/tmp", config.PermFullAccess)
 	assert.False(t, te.IsRemote())
 
 	te.SetRemoteHost("user@host", "/home/user", "/home/user/project")
@@ -215,7 +217,7 @@ func TestToolExecutorRemoteFlag(t *testing.T) {
 }
 
 func TestToolExecutorSetRemoteHostPreservesHomeDir(t *testing.T) {
-	te := NewToolExecutor(false, "/local/home", "/local/home")
+	te := NewToolExecutor(false, "/local/home", "/local/home", config.PermFullAccess)
 	assert.Equal(t, "/local/home", te.homeDir)
 
 	te.SetRemoteHost("user@host", "/remote/home", "/remote/work")
@@ -229,12 +231,12 @@ func TestToolExecutorSetRemoteHostPreservesHomeDir(t *testing.T) {
 
 func TestToolExecutorWorkDirDefaults(t *testing.T) {
 	t.Run("workDir used as default for commands", func(t *testing.T) {
-		te := NewToolExecutor(false, "/home/user", "/home/user/project")
+		te := NewToolExecutor(false, "/home/user", "/home/user/project", config.PermFullAccess)
 		assert.Equal(t, "/home/user/project", te.workDir)
 	})
 
 	t.Run("workDir falls back to homeDir when empty", func(t *testing.T) {
-		te := NewToolExecutor(false, "/home/user", "")
+		te := NewToolExecutor(false, "/home/user", "", config.PermFullAccess)
 		assert.Equal(t, "/home/user", te.workDir)
 	})
 }
@@ -291,7 +293,7 @@ func TestFormatCapturedOutput(t *testing.T) {
 }
 
 func TestToolExecutorEditFile(t *testing.T) {
-	te := NewToolExecutor(false, "/tmp", "/tmp")
+	te := NewToolExecutor(false, "/tmp", "/tmp", config.PermFullAccess)
 
 	t.Run("successful edit", func(t *testing.T) {
 		tmpFile := filepath.Join(t.TempDir(), "edit.txt")
@@ -351,7 +353,7 @@ func TestToolExecutorEditFile(t *testing.T) {
 }
 
 func TestToolExecutorSearchFiles(t *testing.T) {
-	te := NewToolExecutor(false, "/tmp", "/tmp")
+	te := NewToolExecutor(false, "/tmp", "/tmp", config.PermFullAccess)
 
 	dir := t.TempDir()
 	err := os.WriteFile(filepath.Join(dir, "test.go"), []byte("package main\nfunc hello() {}\n"), 0644)
@@ -367,7 +369,7 @@ func TestToolExecutorSearchFiles(t *testing.T) {
 }
 
 func TestToolExecutorFindFiles(t *testing.T) {
-	te := NewToolExecutor(false, "/tmp", "/tmp")
+	te := NewToolExecutor(false, "/tmp", "/tmp", config.PermFullAccess)
 
 	dir := t.TempDir()
 	err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0644)
@@ -383,4 +385,38 @@ func TestToolExecutorFindFiles(t *testing.T) {
 	result := te.Execute(tc)
 	assert.Contains(t, result.Content, "main.go")
 	assert.NotContains(t, result.Content, "readme.md")
+}
+
+func TestToolExecutorHookDenyBlocks(t *testing.T) {
+	te := NewToolExecutor(false, "/tmp", "/tmp", config.PermFullAccess)
+	hooks := []config.HookConfig{
+		{Event: config.HookPreToolUse, Command: "echo 'not allowed' && exit 1", Name: "block-all"},
+	}
+	te.SetHookRunner(hook.NewRunner(hooks, "/tmp"))
+
+	tc := ToolCall{
+		ID:        "call_hook_1",
+		Name:      "run_command",
+		Arguments: `{"command": "echo hello"}`,
+	}
+	result := te.Execute(tc)
+	assert.Contains(t, result.Content, "blocked by hook")
+	assert.Contains(t, result.Content, "not allowed")
+}
+
+func TestToolExecutorHookAllowPasses(t *testing.T) {
+	te := NewToolExecutor(false, "/tmp", "/tmp", config.PermFullAccess)
+	hooks := []config.HookConfig{
+		{Event: config.HookPreToolUse, Command: "exit 0", Name: "allow-all"},
+	}
+	te.SetHookRunner(hook.NewRunner(hooks, "/tmp"))
+
+	tc := ToolCall{
+		ID:        "call_hook_2",
+		Name:      "run_command",
+		Arguments: `{"command": "echo hello"}`,
+	}
+	result := te.Execute(tc)
+	assert.Contains(t, result.Content, "hello")
+	assert.Contains(t, result.Content, "exit_code: 0")
 }

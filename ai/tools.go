@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ekkinox/yai/config"
+	"github.com/ekkinox/yai/hook"
 	"github.com/ekkinox/yai/run"
 )
 
@@ -106,6 +108,18 @@ var searchFilesSchema = json.RawMessage(`{
 		"include": {
 			"type": "string",
 			"description": "Glob pattern to filter files (e.g. '*.go', '*.js'). Optional."
+		},
+		"case_insensitive": {
+			"type": "boolean",
+			"description": "Perform case-insensitive matching. Default false."
+		},
+		"context_lines": {
+			"type": "integer",
+			"description": "Number of context lines to show before and after each match. Default 0."
+		},
+		"max_results": {
+			"type": "integer",
+			"description": "Maximum number of matching lines to return. Default 100."
 		}
 	},
 	"required": ["pattern"]
@@ -121,6 +135,15 @@ var findFilesSchema = json.RawMessage(`{
 		"path": {
 			"type": "string",
 			"description": "Directory to search in. Defaults to the working directory."
+		},
+		"max_results": {
+			"type": "integer",
+			"description": "Maximum number of files to return. Default 100."
+		},
+		"type": {
+			"type": "string",
+			"description": "Filter by type: 'f' for files only, 'd' for directories only. Default: both.",
+			"enum": ["f", "d"]
 		}
 	},
 	"required": ["pattern"]
@@ -155,32 +178,35 @@ func AgentTools() []Tool {
 		},
 		{
 			Name:        "search_files",
-			Description: "Search file contents using a regex pattern, like grep. Returns matching lines with file paths and line numbers. Use this instead of run_command with grep.",
+			Description: "Search file contents using a regex pattern, like grep. Returns matching lines with file paths and line numbers. Supports context lines, case insensitivity, and max results. Use this instead of run_command with grep.",
 			Parameters:  searchFilesSchema,
 		},
 		{
 			Name:        "find_files",
-			Description: "Find files by name pattern using glob matching. Returns matching file paths. Use this instead of run_command with find or ls.",
+			Description: "Find files by name pattern using glob matching. Returns matching file paths. Supports max results and type filtering. Use this instead of run_command with find or ls.",
 			Parameters:  findFilesSchema,
 		},
 	}
 }
 
 type ToolExecutor struct {
-	allowSudo  bool
-	homeDir    string
-	workDir    string // current working directory / workspace root — default for commands and searches
-	remoteHost string
+	allowSudo      bool
+	homeDir        string
+	workDir        string // current working directory / workspace root — default for commands and searches
+	remoteHost     string
+	permissionMode config.PermissionMode
+	hookRunner     *hook.Runner
 }
 
-func NewToolExecutor(allowSudo bool, homeDir string, workDir string) *ToolExecutor {
+func NewToolExecutor(allowSudo bool, homeDir string, workDir string, permMode config.PermissionMode) *ToolExecutor {
 	if workDir == "" {
 		workDir = homeDir
 	}
 	return &ToolExecutor{
-		allowSudo: allowSudo,
-		homeDir:   homeDir,
-		workDir:   workDir,
+		allowSudo:      allowSudo,
+		homeDir:        homeDir,
+		workDir:        workDir,
+		permissionMode: permMode,
 	}
 }
 
@@ -196,11 +222,34 @@ func (te *ToolExecutor) SetRemoteHost(host string, remoteHomeDir string, remoteW
 	}
 }
 
+func (te *ToolExecutor) SetHookRunner(r *hook.Runner) {
+	te.hookRunner = r
+}
+
 func (te *ToolExecutor) IsRemote() bool {
 	return te.remoteHost != ""
 }
 
 func (te *ToolExecutor) Execute(tc ToolCall) ToolResult {
+	// Permission enforcement
+	if !config.IsToolAllowed(tc.Name, te.permissionMode) {
+		return ToolResult{
+			ToolCallID: tc.ID,
+			Content:    fmt.Sprintf("error: tool %q is not allowed in %s permission mode. The user must change USER_PERMISSION_MODE in settings.", tc.Name, te.permissionMode.String()),
+		}
+	}
+
+	// PreToolUse hooks
+	if te.hookRunner != nil {
+		result := te.hookRunner.RunPreToolUse(tc.Name, tc.Arguments)
+		if result.Action == config.HookDeny {
+			return ToolResult{
+				ToolCallID: tc.ID,
+				Content:    fmt.Sprintf("error: tool %q blocked by hook: %s", tc.Name, result.Message),
+			}
+		}
+	}
+
 	var content string
 
 	switch tc.Name {
@@ -220,6 +269,11 @@ func (te *ToolExecutor) Execute(tc ToolCall) ToolResult {
 		content = te.executeFindFiles(tc.Arguments)
 	default:
 		content = fmt.Sprintf("unknown tool: %s", tc.Name)
+	}
+
+	// PostToolUse hooks
+	if te.hookRunner != nil {
+		te.hookRunner.RunPostToolUse(tc.Name, tc.Arguments, content)
 	}
 
 	return ToolResult{
@@ -482,9 +536,12 @@ func (te *ToolExecutor) executeEditFile(argsJSON string) string {
 
 func (te *ToolExecutor) executeSearchFiles(argsJSON string) string {
 	var args struct {
-		Pattern string `json:"pattern"`
-		Path    string `json:"path"`
-		Include string `json:"include"`
+		Pattern         string `json:"pattern"`
+		Path            string `json:"path"`
+		Include         string `json:"include"`
+		CaseInsensitive bool   `json:"case_insensitive"`
+		ContextLines    int    `json:"context_lines"`
+		MaxResults      int    `json:"max_results"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return fmt.Sprintf("error parsing arguments: %s", err)
@@ -495,60 +552,47 @@ func (te *ToolExecutor) executeSearchFiles(argsJSON string) string {
 		searchDir = te.workDir
 	}
 
-	// Build grep command
-	var cmd string
-	if te.IsRemote() {
-		// Use grep -rn on remote
-		cmd = fmt.Sprintf("grep -rn --include=%s %s %s | head -100",
-			shellQuote(func() string {
-				if args.Include != "" {
-					return args.Include
-				}
-				return "*"
-			}()),
-			shellQuote(args.Pattern),
-			shellQuote(searchDir),
-		)
-		if args.Include == "" {
-			cmd = fmt.Sprintf("grep -rn %s %s | head -100",
-				shellQuote(args.Pattern),
-				shellQuote(searchDir),
-			)
-		} else {
-			cmd = fmt.Sprintf("grep -rn --include=%s %s %s | head -100",
-				shellQuote(args.Include),
-				shellQuote(args.Pattern),
-				shellQuote(searchDir),
-			)
-		}
-		output, err := run.CaptureSSHCommand(te.remoteHost, cmd, 30*time.Second)
-		if err != nil {
-			return fmt.Sprintf("error searching: %s", err)
-		}
-		if output.Stdout == "" && output.ExitCode == 1 {
-			return "no matches found"
-		}
-		result := output.Stdout
-		if len(result) > run.MaxOutputBytes {
-			result = result[:run.MaxOutputBytes] + "\n... [results truncated]"
-		}
-		return result
+	maxResults := args.MaxResults
+	if maxResults <= 0 {
+		maxResults = 100
 	}
 
-	// Local: use grep if available, fallback to manual search
+	// Build grep flags
+	flags := "-rn"
+	if args.CaseInsensitive {
+		flags += "i"
+	}
+	if args.ContextLines > 0 {
+		flags += fmt.Sprintf(" -C %d", args.ContextLines)
+	}
+
+	var cmd string
 	if args.Include != "" {
-		cmd = fmt.Sprintf("grep -rn --include=%s %s %s | head -100",
+		cmd = fmt.Sprintf("grep %s --include=%s %s %s | head -%d",
+			flags,
 			shellQuote(args.Include),
 			shellQuote(args.Pattern),
 			shellQuote(searchDir),
+			maxResults,
 		)
 	} else {
-		cmd = fmt.Sprintf("grep -rn %s %s | head -100",
+		cmd = fmt.Sprintf("grep %s %s %s | head -%d",
+			flags,
 			shellQuote(args.Pattern),
 			shellQuote(searchDir),
+			maxResults,
 		)
 	}
-	output, err := run.CaptureCommand(cmd, searchDir, 30*time.Second)
+
+	var output *run.CapturedOutput
+	var err error
+
+	if te.IsRemote() {
+		output, err = run.CaptureSSHCommand(te.remoteHost, cmd, 30*time.Second)
+	} else {
+		output, err = run.CaptureCommand(cmd, searchDir, 30*time.Second)
+	}
+
 	if err != nil {
 		return fmt.Sprintf("error searching: %s", err)
 	}
@@ -564,8 +608,10 @@ func (te *ToolExecutor) executeSearchFiles(argsJSON string) string {
 
 func (te *ToolExecutor) executeFindFiles(argsJSON string) string {
 	var args struct {
-		Pattern string `json:"pattern"`
-		Path    string `json:"path"`
+		Pattern    string `json:"pattern"`
+		Path       string `json:"path"`
+		MaxResults int    `json:"max_results"`
+		Type       string `json:"type"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return fmt.Sprintf("error parsing arguments: %s", err)
@@ -576,27 +622,34 @@ func (te *ToolExecutor) executeFindFiles(argsJSON string) string {
 		searchDir = te.workDir
 	}
 
-	cmd := fmt.Sprintf("find %s -name %s -not -path '*/\\.git/*' 2>/dev/null | head -100",
-		shellQuote(searchDir),
-		shellQuote(args.Pattern),
-	)
-
-	if te.IsRemote() {
-		output, err := run.CaptureSSHCommand(te.remoteHost, cmd, 30*time.Second)
-		if err != nil {
-			return fmt.Sprintf("error finding files: %s", err)
-		}
-		if output.Stdout == "" {
-			return "no files found matching pattern"
-		}
-		result := output.Stdout
-		if len(result) > run.MaxOutputBytes {
-			result = result[:run.MaxOutputBytes] + "\n... [results truncated]"
-		}
-		return result
+	maxResults := args.MaxResults
+	if maxResults <= 0 {
+		maxResults = 100
 	}
 
-	output, err := run.CaptureCommand(cmd, searchDir, 30*time.Second)
+	typeFilter := ""
+	if args.Type == "f" {
+		typeFilter = "-type f "
+	} else if args.Type == "d" {
+		typeFilter = "-type d "
+	}
+
+	cmd := fmt.Sprintf("find %s %s-name %s -not -path '*/\\.git/*' 2>/dev/null | head -%d",
+		shellQuote(searchDir),
+		typeFilter,
+		shellQuote(args.Pattern),
+		maxResults,
+	)
+
+	var output *run.CapturedOutput
+	var err error
+
+	if te.IsRemote() {
+		output, err = run.CaptureSSHCommand(te.remoteHost, cmd, 30*time.Second)
+	} else {
+		output, err = run.CaptureCommand(cmd, searchDir, 30*time.Second)
+	}
+
 	if err != nil {
 		return fmt.Sprintf("error finding files: %s", err)
 	}
