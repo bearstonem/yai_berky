@@ -45,6 +45,7 @@ type Engine struct {
 	remoteInfo    *RemoteSystemInfo
 	session       *session.Session
 	onUsage       func(inputTokens, outputTokens int)
+	modelOverride string // runtime model override; empty = use config
 }
 
 func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
@@ -203,6 +204,44 @@ func probeRemoteSystem(host string) (*RemoteSystemInfo, error) {
 	}
 
 	return info, nil
+}
+
+func (e *Engine) GetModel() string {
+	if e.modelOverride != "" {
+		return e.modelOverride
+	}
+	return e.config.GetAiConfig().GetModel()
+}
+
+func (e *Engine) SetModel(model string) {
+	e.modelOverride = model
+}
+
+func (e *Engine) GetProvider() Provider {
+	return e.provider
+}
+
+func (e *Engine) SwitchProvider(provider string, apiKey string, baseURL string) error {
+	cfg := OpenAIProviderConfig{
+		APIKey:  apiKey,
+		BaseURL: baseURL,
+		Name:    provider,
+	}
+	if apiKey == "" {
+		cfg.APIKey = "no-key"
+	}
+
+	if provider == config.ProviderAnthropic {
+		e.provider = NewAnthropicProvider(apiKey)
+		return nil
+	}
+
+	p, err := NewOpenAIProvider(cfg)
+	if err != nil {
+		return err
+	}
+	e.provider = p
+	return nil
 }
 
 func (e *Engine) SetOnUsage(fn func(inputTokens, outputTokens int)) {
@@ -379,7 +418,7 @@ func (e *Engine) ExecCompletion(input string) (*EngineExecOutput, error) {
 	e.appendUserMessage(input)
 
 	req := CompletionRequest{
-		Model:       e.config.GetAiConfig().GetModel(),
+		Model:       e.GetModel(),
 		MaxTokens:   e.config.GetAiConfig().GetMaxTokens(),
 		Temperature: e.config.GetAiConfig().GetTemperature(),
 		Messages:    e.prepareCompletionMessages(),
@@ -426,7 +465,7 @@ func (e *Engine) ChatStreamCompletion(input string) error {
 	e.appendUserMessage(input)
 
 	req := CompletionRequest{
-		Model:       e.config.GetAiConfig().GetModel(),
+		Model:       e.GetModel(),
 		MaxTokens:   e.config.GetAiConfig().GetMaxTokens(),
 		Temperature: e.config.GetAiConfig().GetTemperature(),
 		Messages:    e.prepareCompletionMessages(),
@@ -690,7 +729,7 @@ func (e *Engine) AgentCompletion(input string, autoExecute bool) error {
 		}
 
 		req := CompletionRequest{
-			Model:       e.config.GetAiConfig().GetModel(),
+			Model:       e.GetModel(),
 			MaxTokens:   e.config.GetAiConfig().GetMaxTokens(),
 			Temperature: e.config.GetAiConfig().GetTemperature(),
 			Messages:    e.prepareCompletionMessages(),

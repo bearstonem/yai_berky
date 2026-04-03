@@ -1054,6 +1054,15 @@ func (u *Ui) buildCommandContext() *command.Context {
 		ctx.ResetFn = func() {
 			u.engine.Reset()
 		}
+		ctx.GetModelFn = func() string {
+			return u.engine.GetModel()
+		}
+		ctx.SetModelFn = func(model string) {
+			u.engine.SetModel(model)
+		}
+		ctx.SwitchProvider = func(provider, apiKey, baseURL string) error {
+			return u.engine.SwitchProvider(provider, apiKey, baseURL)
+		}
 	}
 	ctx.SessionList = func() []session.SessionInfo {
 		return u.listSessions()
@@ -1071,6 +1080,12 @@ func (u *Ui) handleSlashCommand(input string) tea.Cmd {
 	result := cmd.Handler(args, u.buildCommandContext())
 
 	var cmds []tea.Cmd
+
+	// Handle model switch
+	if strings.HasPrefix(result.Output, "model:") {
+		msg := strings.TrimPrefix(result.Output, "model:")
+		return tea.Println(u.components.renderer.RenderSuccess(msg))
+	}
 
 	// Handle yolo toggle
 	if result.Output == "yolo:on" {

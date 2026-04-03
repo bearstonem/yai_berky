@@ -3,6 +3,8 @@ package command
 import (
 	"fmt"
 	"strings"
+
+	"github.com/ekkinox/yai/config"
 )
 
 // RegisterBuiltins adds all built-in slash commands to the registry.
@@ -54,6 +56,12 @@ func RegisterBuiltins(r *Registry) {
 	})
 
 	r.Register(&Command{
+		Name:        "model",
+		Description: "Show or switch model/provider at runtime",
+		Handler:     cmdModel,
+	})
+
+	r.Register(&Command{
 		Name:        "yolo",
 		Aliases:     []string{"auto"},
 		Description: "Toggle yolo mode (auto-execute agent tool calls)",
@@ -100,6 +108,7 @@ func cmdHelp(_ string, ctx *Context) Result {
 		{"/cost", "Show token usage and estimated cost"},
 		{"/session", "List saved sessions"},
 		{"/mode [exec|chat|agent]", "Show or switch mode"},
+		{"/model [provider/model]", "Show or switch model"},
 		{"/yolo", "Toggle yolo mode (auto-execute agent tools)"},
 		{"/diff", "Show git diff of working tree"},
 		{"/commit <message>", "Stage all and commit"},
@@ -174,6 +183,88 @@ func cmdSession(_ string, ctx *Context) Result {
 	}
 
 	return Result{Output: out}
+}
+
+func cmdModel(args string, ctx *Context) Result {
+	args = strings.TrimSpace(args)
+
+	if args == "" {
+		// Show current model info
+		if ctx.GetModelFn == nil {
+			return Result{Output: "Model info not available.", IsError: true}
+		}
+		model := ctx.GetModelFn()
+		provider := ""
+		if ctx.Config != nil {
+			provider = ctx.Config.GetAiConfig().GetProvider()
+		}
+		out := fmt.Sprintf("**Provider:** `%s` | **Model:** `%s`\n\n", provider, model)
+		out += "**Usage:** `/model <model-name>` or `/model <provider>/<model>`\n\n"
+		out += "**Available providers:** "
+		for i, p := range config.ProviderList() {
+			if i > 0 {
+				out += ", "
+			}
+			out += fmt.Sprintf("`%s`", p)
+		}
+		out += "\n"
+		return Result{Output: out}
+	}
+
+	// Check for provider/model format
+	if strings.Contains(args, "/") {
+		parts := strings.SplitN(args, "/", 2)
+		provider := strings.TrimSpace(parts[0])
+		model := strings.TrimSpace(parts[1])
+
+		if model == "" {
+			return Result{Output: "Missing model name after `/`. Usage: `/model provider/model`", IsError: true}
+		}
+
+		// Validate provider
+		valid := false
+		for _, p := range config.ProviderList() {
+			if p == provider {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return Result{Output: fmt.Sprintf("Unknown provider: `%s`", provider), IsError: true}
+		}
+
+		// Switch provider
+		if ctx.SwitchProvider != nil {
+			apiKey := ""
+			baseURL := ""
+			if ctx.Config != nil {
+				apiKey = ctx.Config.GetAiConfig().GetKey()
+				if defaultURL, ok := config.ProviderBaseURLs[provider]; ok {
+					baseURL = defaultURL
+				}
+			}
+			if err := ctx.SwitchProvider(provider, apiKey, baseURL); err != nil {
+				return Result{Output: fmt.Sprintf("Failed to switch provider: %s", err), IsError: true}
+			}
+		}
+
+		// Set model
+		if ctx.SetModelFn != nil {
+			ctx.SetModelFn(model)
+		}
+
+		name := config.ProviderDisplayNames[provider]
+		if name == "" {
+			name = provider
+		}
+		return Result{Output: fmt.Sprintf("model:switched to **%s** / `%s`", name, model)}
+	}
+
+	// Just a model name — switch model only, keep current provider
+	if ctx.SetModelFn != nil {
+		ctx.SetModelFn(args)
+	}
+	return Result{Output: fmt.Sprintf("model:switched to `%s`", args)}
 }
 
 func cmdYolo(args string, ctx *Context) Result {

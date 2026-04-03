@@ -173,7 +173,7 @@ func (r *Renderer) RenderHelpMessage() string {
 	help += "- `ctrl+r`: clear terminal and reset discussion history\n"
 	help += "- `ctrl+l`: clear terminal but keep discussion history\n"
 	help += "- `ctrl+c`: exit or interrupt command execution\n\n"
-	help += "**Slash commands:** `/help`, `/clear`, `/reset`, `/compact`, `/cost`, `/session`, `/mode`, `/yolo`, `/diff`, `/commit`, `/status`, `/log`\n\n"
+	help += "**Slash commands:** `/help`, `/clear`, `/reset`, `/compact`, `/cost`, `/session`, `/mode`, `/model`, `/yolo`, `/diff`, `/commit`, `/status`, `/log`\n\n"
 	help += "**Agent mode:** the AI autonomously runs commands to complete tasks.\n"
 	help += "Use `/yolo` to toggle auto-execution at runtime, or set `USER_AGENT_AUTO_EXECUTE` in settings (`ctrl+s`).\n\n"
 	help += "**Permissions:** set `USER_PERMISSION_MODE` to `read-only`, `workspace-write` (default), or `full-access`.\n"

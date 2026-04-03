@@ -18,5 +18,8 @@ type Context struct {
 	ResetFn     func()
 	CompactFn   func() string // returns summary of compacted messages
 	SessionList func() []session.SessionInfo
-	SetYoloFn   func(bool)
+	SetYoloFn      func(bool)
+	GetModelFn     func() string
+	SetModelFn     func(string)
+	SwitchProvider func(provider, apiKey, baseURL string) error
 }
