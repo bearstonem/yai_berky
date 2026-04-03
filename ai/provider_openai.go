@@ -64,9 +64,17 @@ func (p *OpenAIProvider) LastUsage() Usage {
 func (p *OpenAIProvider) toOpenAIMessages(messages []Message) []openai.ChatCompletionMessage {
 	msgs := make([]openai.ChatCompletionMessage, len(messages))
 	for i, m := range messages {
+		content := m.Content
+		// The go-openai library uses `json:"content,omitempty"` which omits
+		// empty strings, sending null to the API. Tool-role messages require
+		// content to be a non-null string, and some providers reject null
+		// content on assistant messages with tool calls too.
+		if content == "" && (m.Role == "tool" || (m.Role == "assistant" && len(m.ToolCalls) > 0)) {
+			content = " "
+		}
 		msg := openai.ChatCompletionMessage{
 			Role:    m.Role,
-			Content: m.Content,
+			Content: content,
 		}
 		if m.ToolCallID != "" {
 			msg.ToolCallID = m.ToolCallID
