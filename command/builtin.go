@@ -115,7 +115,7 @@ func cmdHelp(_ string, ctx *Context) Result {
 		{"/cost", "Show token usage and estimated cost"},
 		{"/session", "List saved sessions"},
 		{"/mode [exec|chat|agent]", "Show or switch mode"},
-		{"/model [provider/model]", "Show or switch model"},
+		{"/model [provider/model]", "Show or switch model (use --save or /model save)"},
 		{"/yolo", "Toggle yolo mode (auto-execute agent tools)"},
 		{"/integrate", "Manage tool integrations (add/remove/list)"},
 		{"/diff", "Show git diff of working tree"},
@@ -196,6 +196,39 @@ func cmdSession(_ string, ctx *Context) Result {
 func cmdModel(args string, ctx *Context) Result {
 	args = strings.TrimSpace(args)
 
+	// Check for --save flag
+	save := false
+	if strings.HasSuffix(args, " --save") {
+		save = true
+		args = strings.TrimSpace(strings.TrimSuffix(args, "--save"))
+	} else if strings.HasSuffix(args, " --default") {
+		save = true
+		args = strings.TrimSpace(strings.TrimSuffix(args, "--default"))
+	}
+
+	// /model save — persist current runtime model as default
+	if args == "save" || args == "default" {
+		provider := ""
+		model := ""
+		if ctx.GetModelFn != nil {
+			model = ctx.GetModelFn()
+		}
+		if ctx.Config != nil {
+			provider = ctx.Config.GetAiConfig().GetProvider()
+		}
+		if model == "" {
+			return Result{Output: "No model is currently set.", IsError: true}
+		}
+		if err := config.SaveDefaultModel(provider, model); err != nil {
+			return Result{Output: fmt.Sprintf("Failed to save default: %s", err), IsError: true}
+		}
+		out := fmt.Sprintf("Saved default model: `%s`", model)
+		if provider != "" {
+			out = fmt.Sprintf("Saved default: **%s** / `%s`", config.ProviderDisplayNames[provider], model)
+		}
+		return Result{Output: "model:" + out}
+	}
+
 	if args == "" {
 		// Show current model info
 		if ctx.GetModelFn == nil {
@@ -207,7 +240,8 @@ func cmdModel(args string, ctx *Context) Result {
 			provider = ctx.Config.GetAiConfig().GetProvider()
 		}
 		out := fmt.Sprintf("**Provider:** `%s` | **Model:** `%s`\n\n", provider, model)
-		out += "**Usage:** `/model <model-name>` or `/model <provider>/<model>`\n\n"
+		out += "**Usage:** `/model <model-name>` or `/model <provider>/<model>`\n"
+		out += "**Save as default:** `/model save` or `/model <model> --save`\n\n"
 		out += "**Available providers:** "
 		for i, p := range config.ProviderList() {
 			if i > 0 {
@@ -266,6 +300,22 @@ func cmdModel(args string, ctx *Context) Result {
 			ctx.SetModelFn(model)
 		}
 
+		// Save if requested
+		if save {
+			if err := config.SaveDefaultModel(provider, model); err != nil {
+				name := config.ProviderDisplayNames[provider]
+				if name == "" {
+					name = provider
+				}
+				return Result{Output: fmt.Sprintf("model:switched to **%s** / `%s` (failed to save: %s)", name, model, err)}
+			}
+			name := config.ProviderDisplayNames[provider]
+			if name == "" {
+				name = provider
+			}
+			return Result{Output: fmt.Sprintf("model:switched to **%s** / `%s` (saved as default)", name, model)}
+		}
+
 		name := config.ProviderDisplayNames[provider]
 		if name == "" {
 			name = provider
@@ -277,6 +327,18 @@ func cmdModel(args string, ctx *Context) Result {
 	if ctx.SetModelFn != nil {
 		ctx.SetModelFn(args)
 	}
+
+	if save {
+		provider := ""
+		if ctx.Config != nil {
+			provider = ctx.Config.GetAiConfig().GetProvider()
+		}
+		if err := config.SaveDefaultModel(provider, args); err != nil {
+			return Result{Output: fmt.Sprintf("model:switched to `%s` (failed to save: %s)", args, err)}
+		}
+		return Result{Output: fmt.Sprintf("model:switched to `%s` (saved as default)", args)}
+	}
+
 	return Result{Output: fmt.Sprintf("model:switched to `%s`", args)}
 }
 

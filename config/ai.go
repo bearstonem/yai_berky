@@ -1,6 +1,10 @@
 package config
 
-import "os"
+import (
+	"os"
+
+	"github.com/spf13/viper"
+)
 
 const (
 	// New provider-agnostic keys
@@ -151,4 +155,15 @@ func (c AiConfig) GetEffectiveBaseURL() string {
 		return url
 	}
 	return ""
+}
+
+// SaveDefaultModel persists the given provider and model to the config file.
+func SaveDefaultModel(provider, model string) error {
+	if provider != "" {
+		viper.Set(ai_provider, provider)
+	}
+	if model != "" {
+		viper.Set(ai_model, model)
+	}
+	return viper.WriteConfig()
 }
