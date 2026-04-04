@@ -112,6 +112,19 @@ func NewConfig() (*Config, error) {
 	}, nil
 }
 
+// SaveAllSettings updates all config values and writes to disk.
+func SaveAllSettings(settings map[string]interface{}) (*Config, error) {
+	for k, v := range settings {
+		viper.Set(k, v)
+	}
+
+	if err := viper.WriteConfig(); err != nil {
+		return nil, fmt.Errorf("writing config: %w", err)
+	}
+
+	return NewConfig()
+}
+
 // overlayConfigFile merges a JSON config file on top of the current viper state.
 // It uses a temporary viper instance to read the file, then sets any non-zero
 // values into the main viper. This allows project/local configs to selectively

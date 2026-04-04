@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ekkinox/yai/agent"
 	"github.com/ekkinox/yai/config"
 	"github.com/ekkinox/yai/hook"
 	"github.com/ekkinox/yai/integration"
@@ -48,6 +49,7 @@ type Engine struct {
 	session       *session.Session
 	onUsage       func(inputTokens, outputTokens int)
 	modelOverride string // runtime model override; empty = use config
+	agentProfile  *agent.Profile // custom agent profile; nil = default
 	memoryStore   *memory.Store
 	embedder      memory.EmbeddingProvider
 }
@@ -166,6 +168,11 @@ func buildEmbedder(cfg *config.Config) memory.EmbeddingProvider {
 
 	// Fallback: try Ollama locally
 	return memory.NewOllamaEmbedder("", "")
+}
+
+// GetToolExecutor returns the tool executor.
+func (e *Engine) GetToolExecutor() *ToolExecutor {
+	return e.toolExecutor
 }
 
 // GetMemoryStore returns the memory store (may be nil).
@@ -431,6 +438,15 @@ func (e *Engine) GetSession() *session.Session {
 
 func (e *Engine) SetSession(s *session.Session) {
 	e.session = s
+}
+
+// SetAgentProfile configures a custom agent profile that overrides
+// the system prompt and optionally restricts the available tools.
+func (e *Engine) SetAgentProfile(p *agent.Profile) {
+	e.agentProfile = p
+	if p != nil && p.Model != "" {
+		e.modelOverride = p.Model
+	}
 }
 
 func (e *Engine) StartNewSession() {
@@ -758,6 +774,13 @@ func (e *Engine) preparePipePrompt() string {
 }
 
 func (e *Engine) prepareSystemPrompt() string {
+	// If a custom agent profile is set, use its system prompt
+	if e.agentProfile != nil && e.agentProfile.SystemPrompt != "" {
+		prompt := e.agentProfile.SystemPrompt
+		prompt += "\n" + e.prepareSystemPromptContextPart()
+		return prompt
+	}
+
 	var bodyPart string
 	switch e.mode {
 	case ExecEngineMode:
@@ -883,6 +906,27 @@ Skills prefixed with skill_ appear as regular tools you can call.
 	return prompt
 }
 
+// agentTools returns the tool set for the current agent, filtered by profile if set.
+func (e *Engine) agentTools() []Tool {
+	all := e.toolExecutor.AllTools()
+	if e.agentProfile == nil || len(e.agentProfile.Tools) == 0 {
+		return all
+	}
+
+	allowed := make(map[string]bool, len(e.agentProfile.Tools))
+	for _, name := range e.agentProfile.Tools {
+		allowed[name] = true
+	}
+
+	var filtered []Tool
+	for _, t := range all {
+		if allowed[t.Name] {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
+}
+
 func (e *Engine) AgentCompletion(input string, autoExecute bool) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancelFn = cancel
@@ -903,7 +947,7 @@ func (e *Engine) AgentCompletion(input string, autoExecute bool) error {
 			MaxTokens:   e.config.GetAiConfig().GetMaxTokens(),
 			Temperature: e.config.GetAiConfig().GetTemperature(),
 			Messages:    e.prepareCompletionMessages(),
-			Tools:       e.toolExecutor.AllTools(),
+			Tools:       e.agentTools(),
 		}
 
 		resp, err := e.provider.CompleteWithTools(ctx, req)

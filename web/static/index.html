@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>yai - AI Terminal Assistant</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+  <nav id="sidebar">
+    <div class="logo">
+      <span class="logo-icon">&#x1F680;</span>
+      <span class="logo-text">yai</span>
+    </div>
+    <div class="nav-items">
+      <button class="nav-btn active" data-page="chat" onclick="switchPage('chat')">
+        <span class="nav-icon">&#x1F4AC;</span> Chat
+      </button>
+      <button class="nav-btn" data-page="agent" onclick="switchPage('agent')">
+        <span class="nav-icon">&#x1F916;</span> Primary Agent
+      </button>
+      <button class="nav-btn" data-page="agents" onclick="switchPage('agents')">
+        <span class="nav-icon">&#x1F47E;</span> Sub-Agents
+      </button>
+      <button class="nav-btn" data-page="skills" onclick="switchPage('skills')">
+        <span class="nav-icon">&#x1F9E0;</span> Skills
+      </button>
+      <button class="nav-btn" data-page="sessions" onclick="switchPage('sessions')">
+        <span class="nav-icon">&#x1F4C1;</span> Sessions
+      </button>
+      <button class="nav-btn" data-page="settings" onclick="switchPage('settings')">
+        <span class="nav-icon">&#x2699;&#xFE0F;</span> Settings
+      </button>
+    </div>
+    <div class="nav-footer">
+      <div id="memory-stats" class="stats-badge"></div>
+      <div id="provider-badge" class="stats-badge"></div>
+    </div>
+  </nav>
+
+  <main id="content">
+    <!-- Chat Page -->
+    <div id="page-chat" class="page active">
+      <div class="page-header">
+        <h1>Chat</h1>
+        <span class="page-desc">Ask questions, get answers</span>
+      </div>
+      <div id="chat-messages" class="message-area"></div>
+      <div class="input-bar">
+        <textarea id="chat-input" placeholder="Ask me anything..." rows="1"
+          onkeydown="handleInputKey(event, 'chat')"></textarea>
+        <button class="send-btn" onclick="sendChat()">Send</button>
+      </div>
+    </div>
+
+    <!-- Primary Agent Page -->
+    <div id="page-agent" class="page">
+      <div class="page-header">
+        <h1>Primary Agent</h1>
+        <span class="page-desc">Give tasks, watch the AI work autonomously</span>
+        <select id="agent-profile-select" class="profile-select" onchange="onAgentProfileChange()">
+          <option value="">Primary Agent</option>
+        </select>
+      </div>
+      <div id="agent-profile-info" class="profile-info hidden"></div>
+      <div id="agent-messages" class="message-area"></div>
+      <div class="input-bar">
+        <textarea id="agent-input" placeholder="Describe a task..." rows="1"
+          onkeydown="handleInputKey(event, 'agent')"></textarea>
+        <button class="send-btn" onclick="sendAgent()">Run</button>
+      </div>
+    </div>
+
+    <!-- Sub-Agents Page -->
+    <div id="page-agents" class="page">
+      <div class="page-header">
+        <h1>Sub-Agents</h1>
+        <span class="page-desc">Create and manage specialized agent profiles</span>
+        <button class="action-btn" onclick="openAgentBuilder()" style="margin-left:0">AI Builder</button>
+        <button class="action-btn" onclick="showCreateAgent()">+ New Agent</button>
+      </div>
+      <div id="agents-list" class="card-grid"></div>
+
+      <!-- Create/Edit agent modal -->
+      <div id="agent-modal" class="modal hidden">
+        <div class="modal-content modal-wide">
+          <div class="modal-header">
+            <h2 id="agent-modal-title">Create Agent</h2>
+            <button class="close-btn" onclick="hideModal('agent-modal')">&times;</button>
+          </div>
+          <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="agent-name" placeholder="e.g. code-reviewer, devops-bot">
+          </div>
+          <div class="form-group">
+            <label>Description</label>
+            <input type="text" id="agent-desc" placeholder="What this agent specializes in...">
+          </div>
+          <div class="form-group">
+            <label>Model Override (optional)</label>
+            <input type="text" id="agent-model" placeholder="Leave empty for default model">
+          </div>
+          <div class="form-group">
+            <label>System Prompt</label>
+            <textarea id="agent-prompt" rows="10" placeholder="You are a specialized agent that..."></textarea>
+          </div>
+          <div class="form-group">
+            <label>Allowed Tools</label>
+            <p class="form-hint">Select which tools this agent can use. Leave all unchecked for full access.</p>
+            <div id="agent-tools-checklist" class="tools-checklist"></div>
+          </div>
+          <input type="hidden" id="agent-edit-id" value="">
+          <div class="modal-actions">
+            <button class="cancel-btn" onclick="hideModal('agent-modal')">Cancel</button>
+            <button class="action-btn" id="agent-save-btn" onclick="saveAgent()">Create</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Skills Page -->
+    <div id="page-skills" class="page">
+      <div class="page-header">
+        <h1>Skills</h1>
+        <span class="page-desc">Manage agent-created tools</span>
+        <button class="action-btn" onclick="openSkillBuilder()" style="margin-left:0">AI Builder</button>
+        <button class="action-btn" onclick="showCreateSkill()">+ New Skill</button>
+      </div>
+      <div class="filter-bar">
+        <input type="text" id="skills-filter-text" class="filter-input" placeholder="Search skills..." oninput="filterSkills()">
+        <select id="skills-filter-lang" class="filter-select" onchange="filterSkills()">
+          <option value="">All languages</option>
+          <option value="bash">Bash</option>
+          <option value="python">Python</option>
+          <option value="node">Node.js</option>
+          <option value="ruby">Ruby</option>
+        </select>
+        <span id="skills-count" class="filter-count"></span>
+      </div>
+      <div id="skills-list" class="card-grid"></div>
+
+      <!-- Create skill modal -->
+      <div id="skill-modal" class="modal hidden">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2 id="skill-modal-title">Create Skill</h2>
+            <button class="close-btn" onclick="hideModal('skill-modal')">&times;</button>
+          </div>
+          <input type="hidden" id="skill-edit-name" value="">
+          <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="skill-name" placeholder="my_tool">
+          </div>
+          <div class="form-group">
+            <label>Description</label>
+            <input type="text" id="skill-desc" placeholder="What this skill does...">
+          </div>
+          <div class="form-group">
+            <label>Language</label>
+            <select id="skill-lang">
+              <option value="bash">Bash</option>
+              <option value="python">Python</option>
+              <option value="node">Node.js</option>
+              <option value="ruby">Ruby</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Script</label>
+            <textarea id="skill-script" rows="12" placeholder="#!/bin/bash&#10;echo 'hello'"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Parameters (JSON schema, optional)</label>
+            <textarea id="skill-params" rows="4" placeholder='{"type":"object","properties":{}}'></textarea>
+          </div>
+          <div class="modal-actions">
+            <button class="cancel-btn" onclick="hideModal('skill-modal')">Cancel</button>
+            <button class="action-btn" id="skill-save-btn" onclick="saveSkill()">Create</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sessions Page -->
+    <div id="page-sessions" class="page">
+      <div class="page-header">
+        <h1>Sessions</h1>
+        <span class="page-desc">Browse conversation history</span>
+      </div>
+      <div class="filter-bar">
+        <input type="text" id="sessions-filter-text" class="filter-input" placeholder="Search sessions..." oninput="filterSessions()">
+        <select id="sessions-filter-mode" class="filter-select" onchange="filterSessions()">
+          <option value="">All modes</option>
+          <option value="exec">Exec</option>
+          <option value="chat">Chat</option>
+          <option value="agent">Agent</option>
+        </select>
+        <span id="sessions-count" class="filter-count"></span>
+      </div>
+      <div id="sessions-list" class="card-grid"></div>
+
+      <!-- Session detail modal -->
+      <div id="session-modal" class="modal hidden">
+        <div class="modal-content modal-wide">
+          <div class="modal-header">
+            <h2 id="session-modal-title">Session</h2>
+            <button class="close-btn" onclick="hideModal('session-modal')">&times;</button>
+          </div>
+          <div id="session-messages" class="session-messages"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Page -->
+    <div id="page-settings" class="page">
+      <div class="page-header">
+        <h1>Settings</h1>
+        <span class="page-desc">Configuration &mdash; changes are saved to ~/.config/yai.json</span>
+      </div>
+      <div id="settings-form" class="settings-form"></div>
+      <div id="settings-status" class="settings-status hidden"></div>
+      <div class="page-header" style="margin-top:2rem">
+        <h2>Available Providers</h2>
+      </div>
+      <div id="providers-list" class="card-grid"></div>
+    </div>
+    <!-- Builder Modal (shared by skill & agent builders) -->
+    <div id="builder-modal" class="modal hidden">
+      <div class="modal-content modal-wide builder-modal-content">
+        <div class="modal-header">
+          <h2 id="builder-title">AI Builder</h2>
+          <button class="close-btn" onclick="closeBuilder()">&times;</button>
+        </div>
+        <div id="builder-messages" class="message-area builder-messages"></div>
+        <div id="builder-save-bar" class="builder-save-bar hidden">
+          <span id="builder-save-label">Definition ready!</span>
+          <button class="action-btn" onclick="saveBuilderResult()">Save to Inventory</button>
+          <button class="cancel-btn" onclick="editBuilderResult()">Edit first</button>
+        </div>
+        <div class="input-bar">
+          <textarea id="builder-input" placeholder="Describe what you want to build..." rows="1"
+            onkeydown="handleBuilderKey(event)"></textarea>
+          <button class="send-btn" id="builder-send-btn" onclick="sendBuilderMessage()">Send</button>
+          <button class="finish-btn" id="builder-finish-btn" onclick="finishBuilder()">Finish &amp; Save</button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

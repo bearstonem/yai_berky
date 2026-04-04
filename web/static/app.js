@@ -1,0 +1,1353 @@
+// yai GUI - Frontend Application
+
+const API = '';  // same origin
+
+// --- State ---
+let allTools = [];
+let allAgents = [];
+let allSkills = [];
+let allSessions = [];
+
+// --- Page Navigation ---
+
+function switchPage(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+  document.querySelector('[data-page="' + page + '"]').classList.add('active');
+
+  // Load data for the page
+  if (page === 'skills') loadSkills();
+  if (page === 'sessions') loadSessions();
+  if (page === 'settings') { loadConfig(); loadProviders(); }
+  if (page === 'agents') loadAgentsList();
+  if (page === 'agent') loadAgentProfiles();
+}
+
+// --- Auto-resize textareas ---
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+}
+
+document.querySelectorAll('.input-bar textarea').forEach(el => {
+  el.addEventListener('input', () => autoResize(el));
+});
+
+// --- Input handling ---
+
+function handleInputKey(e, mode) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
+    e.preventDefault();
+    if (mode === 'chat') sendChat();
+    else if (mode === 'agent') sendAgent();
+  }
+}
+
+// --- Chat ---
+
+let chatStreaming = false;
+
+function sendChat() {
+  const input = document.getElementById('chat-input');
+  const message = input.value.trim();
+  if (!message || chatStreaming) return;
+
+  addMessage('chat-messages', message, 'user');
+  input.value = '';
+  autoResize(input);
+  chatStreaming = true;
+
+  const area = document.getElementById('chat-messages');
+  const streamer = createThinkStreamer(area);
+
+  fetchSSE('/api/chat', { message }, {
+    content: (data) => {
+      streamer.push(data);
+    },
+    done: () => {
+      streamer.finish();
+      chatStreaming = false;
+    },
+    error: (data) => {
+      streamer.finish();
+      addMessage('chat-messages', 'Error: ' + data, 'error');
+      chatStreaming = false;
+    }
+  });
+}
+
+// --- Agent ---
+
+let agentRunning = false;
+
+function sendAgent() {
+  const input = document.getElementById('agent-input');
+  const message = input.value.trim();
+  if (!message || agentRunning) return;
+
+  addMessage('agent-messages', message, 'user');
+  input.value = '';
+  autoResize(input);
+  agentRunning = true;
+
+  const area = document.getElementById('agent-messages');
+  let currentMsg = null;
+  const agentId = document.getElementById('agent-profile-select').value;
+  const body = { message };
+  if (agentId) body.agent_id = agentId;
+
+  fetchSSE('/api/agent', body, {
+    thinking: (data) => {
+      // Render think-tagged content in a collapsible block, rest as thinking bubble
+      const clean = data.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+      const thinkMatch = data.match(/<think>([\s\S]*?)<\/think>/);
+      if (thinkMatch && thinkMatch[1].trim()) {
+        const el = document.createElement('details');
+        el.className = 'msg msg-think-block';
+        el.innerHTML = '<summary class="think-summary">Thinking...</summary>' +
+          '<div class="think-content">' + escapeHtml(thinkMatch[1].trim()) + '</div>';
+        area.appendChild(el);
+      }
+      if (clean) {
+        addMessage('agent-messages', clean, 'thinking');
+      }
+      area.scrollTop = area.scrollHeight;
+    },
+    tool_call: (data) => {
+      try {
+        const tc = JSON.parse(data);
+        const el = document.createElement('div');
+        el.className = 'msg msg-tool';
+        el.innerHTML = '<div class="tool-name">' + escapeHtml(tc.name) + '</div>' +
+          '<div>' + escapeHtml(truncate(tc.arguments, 300)) + '</div>';
+        area.appendChild(el);
+        area.scrollTop = area.scrollHeight;
+      } catch(e) {
+        addMessage('agent-messages', '[tool] ' + data, 'tool');
+      }
+    },
+    tool_result: (data) => {
+      const el = document.createElement('div');
+      el.className = 'msg msg-tool';
+      el.innerHTML = '<div class="tool-result">' + escapeHtml(truncate(data, 500)) + '</div>';
+      area.appendChild(el);
+      area.scrollTop = area.scrollHeight;
+    },
+    answer: (data) => {
+      addMessage('agent-messages', data, 'assistant');
+      area.scrollTop = area.scrollHeight;
+    },
+    error: (data) => {
+      addMessage('agent-messages', 'Error: ' + data, 'error');
+    },
+    done: () => {
+      agentRunning = false;
+    }
+  });
+}
+
+// --- SSE Helper (POST-based) ---
+
+function fetchSSE(url, body, handlers) {
+  fetch(API + url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(response => {
+    if (!response.ok) {
+      return response.text().then(t => {
+        if (handlers.error) handlers.error(t);
+        if (handlers.done) handlers.done();
+      });
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    function read() {
+      reader.read().then(({ done, value }) => {
+        if (done) {
+          if (handlers.done) handlers.done();
+          return;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop(); // keep incomplete line
+
+        let currentEvent = '';
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7);
+          } else if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (currentEvent && handlers[currentEvent]) {
+              handlers[currentEvent](data);
+            }
+            currentEvent = '';
+          }
+        }
+
+        read();
+      });
+    }
+
+    read();
+  }).catch(err => {
+    if (handlers.error) handlers.error(err.message);
+    if (handlers.done) handlers.done();
+  });
+}
+
+// --- Message helpers ---
+
+function addMessage(containerId, text, type) {
+  const area = document.getElementById(containerId);
+  const el = document.createElement('div');
+  const classes = type.split(' ').map(t => 'msg-' + t).join(' ');
+  el.className = 'msg ' + classes;
+  el.textContent = text;
+  area.appendChild(el);
+  area.scrollTop = area.scrollHeight;
+  return el;
+}
+
+// --- Skills ---
+
+async function loadSkills() {
+  const res = await fetch(API + '/api/skills');
+  allSkills = await res.json();
+  filterSkills();
+}
+
+function filterSkills() {
+  const text = (document.getElementById('skills-filter-text').value || '').toLowerCase();
+  const lang = document.getElementById('skills-filter-lang').value;
+  const container = document.getElementById('skills-list');
+
+  let filtered = allSkills;
+  if (text) {
+    filtered = filtered.filter(s =>
+      (s.name || '').toLowerCase().includes(text) ||
+      (s.description || '').toLowerCase().includes(text)
+    );
+  }
+  if (lang) {
+    filtered = filtered.filter(s => {
+      const sl = (s.language || 'bash').toLowerCase();
+      return sl === lang || sl.startsWith(lang);
+    });
+  }
+
+  document.getElementById('skills-count').textContent =
+    filtered.length === allSkills.length ? '' : filtered.length + ' of ' + allSkills.length;
+
+  if (allSkills.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x1F9E0;</div>' +
+      '<p>No skills yet. Create one or ask the agent to build a skill.</p></div>';
+    return;
+  }
+  if (filtered.length === 0) {
+    container.innerHTML = '<div class="empty-state"><p>No skills match your filter.</p></div>';
+    return;
+  }
+
+  container.innerHTML = filtered.map(s => `
+    <div class="card">
+      <div class="card-title">
+        <span>${escapeHtml(s.name)}</span>
+        <span class="badge badge-lang">${escapeHtml(s.language || 'bash')}</span>
+      </div>
+      <div class="card-meta">Tool: <code>${escapeHtml('skill_' + s.name.toLowerCase().replace(/\s+/g, '_'))}</code></div>
+      <div class="card-desc">${escapeHtml(s.description || 'No description')}</div>
+      <div class="card-actions">
+        <button class="card-btn" onclick="editSkill('${escapeHtml(s.name)}')">Edit</button>
+        <button class="card-btn danger" onclick="deleteSkill('${escapeHtml(s.name)}')">Delete</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function showCreateSkill() {
+  document.getElementById('skill-modal-title').textContent = 'Create Skill';
+  document.getElementById('skill-save-btn').textContent = 'Create';
+  document.getElementById('skill-edit-name').value = '';
+  document.getElementById('skill-name').value = '';
+  document.getElementById('skill-name').disabled = false;
+  document.getElementById('skill-desc').value = '';
+  document.getElementById('skill-lang').value = 'bash';
+  document.getElementById('skill-script').value = '';
+  document.getElementById('skill-params').value = '';
+  document.getElementById('skill-modal').classList.remove('hidden');
+}
+
+async function editSkill(name) {
+  const res = await fetch(API + '/api/skills/' + encodeURIComponent(name));
+  if (!res.ok) return;
+  const s = await res.json();
+
+  document.getElementById('skill-modal-title').textContent = 'Edit Skill';
+  document.getElementById('skill-save-btn').textContent = 'Save';
+  document.getElementById('skill-edit-name').value = s.name;
+  document.getElementById('skill-name').value = s.name;
+  document.getElementById('skill-name').disabled = true;
+  document.getElementById('skill-desc').value = s.description || '';
+  document.getElementById('skill-lang').value = s.language || 'bash';
+  document.getElementById('skill-script').value = s.script || '';
+  try {
+    document.getElementById('skill-params').value =
+      s.parameters ? JSON.stringify(s.parameters, null, 2) : '';
+  } catch(e) {
+    document.getElementById('skill-params').value = '';
+  }
+  document.getElementById('skill-modal').classList.remove('hidden');
+}
+
+async function saveSkill() {
+  const editName = document.getElementById('skill-edit-name').value;
+  const name = document.getElementById('skill-name').value.trim();
+  const desc = document.getElementById('skill-desc').value.trim();
+  const lang = document.getElementById('skill-lang').value;
+  const script = document.getElementById('skill-script').value;
+  const paramsStr = document.getElementById('skill-params').value.trim();
+
+  if (!name || !script) {
+    alert('Name and script are required');
+    return;
+  }
+
+  let params = null;
+  if (paramsStr) {
+    try {
+      params = JSON.parse(paramsStr);
+    } catch (e) {
+      alert('Invalid JSON in parameters');
+      return;
+    }
+  }
+
+  let res;
+  if (editName) {
+    // Update existing skill
+    res = await fetch(API + '/api/skills/' + encodeURIComponent(editName), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description: desc, language: lang, script, parameters: params })
+    });
+  } else {
+    // Create new skill
+    res = await fetch(API + '/api/skills', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description: desc, language: lang, script, parameters: params })
+    });
+  }
+
+  if (res.ok) {
+    hideModal('skill-modal');
+    loadSkills();
+  } else {
+    const err = await res.json();
+    alert('Error: ' + (err.error || 'Unknown error'));
+  }
+}
+
+async function deleteSkill(name) {
+  if (!confirm('Delete skill "' + name + '"?')) return;
+  const res = await fetch(API + '/api/skills/' + encodeURIComponent(name), { method: 'DELETE' });
+  if (res.ok) {
+    loadSkills();
+  } else {
+    const err = await res.json();
+    alert('Error: ' + (err.error || 'Unknown error'));
+  }
+}
+
+// --- Sessions ---
+
+async function loadSessions() {
+  const res = await fetch(API + '/api/sessions');
+  allSessions = await res.json();
+  filterSessions();
+}
+
+function filterSessions() {
+  const text = (document.getElementById('sessions-filter-text').value || '').toLowerCase();
+  const mode = document.getElementById('sessions-filter-mode').value;
+  const container = document.getElementById('sessions-list');
+
+  let filtered = allSessions;
+  if (text) {
+    filtered = filtered.filter(s =>
+      (s.summary || '').toLowerCase().includes(text) ||
+      (s.id || '').toLowerCase().includes(text)
+    );
+  }
+  if (mode) {
+    filtered = filtered.filter(s => s.mode === mode);
+  }
+
+  document.getElementById('sessions-count').textContent =
+    filtered.length === allSessions.length ? '' : filtered.length + ' of ' + allSessions.length;
+
+  if (allSessions.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x1F4C1;</div>' +
+      '<p>No sessions yet. Start a conversation to create one.</p></div>';
+    return;
+  }
+  if (filtered.length === 0) {
+    container.innerHTML = '<div class="empty-state"><p>No sessions match your filter.</p></div>';
+    return;
+  }
+
+  container.innerHTML = filtered.map(s => `
+    <div class="card" style="cursor:pointer" onclick="viewSession('${escapeHtml(s.id)}')">
+      <div class="card-title">
+        <span class="badge badge-mode">${escapeHtml(s.mode)}</span>
+        <span>${escapeHtml(s.summary || 'Untitled')}</span>
+      </div>
+      <div class="card-meta">${escapeHtml(s.id)} &middot; ${s.messages} messages &middot; ${formatDate(s.updated_at)}</div>
+      <div class="card-actions">
+        <button class="card-btn danger" onclick="event.stopPropagation(); deleteSession('${escapeHtml(s.id)}')">Delete</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function viewSession(id) {
+  const res = await fetch(API + '/api/sessions/' + id);
+  if (!res.ok) return;
+  const sess = await res.json();
+
+  document.getElementById('session-modal-title').textContent =
+    (sess.summary || 'Session') + ' (' + sess.mode + ')';
+
+  const container = document.getElementById('session-messages');
+  container.innerHTML = sess.messages.map(m => {
+    const type = m.role === 'user' ? 'user' : m.role === 'tool' ? 'tool' : 'assistant';
+    let content = m.content || '';
+    if (m.tool_calls && m.tool_calls.length > 0) {
+      content += m.tool_calls.map(tc =>
+        '\n[tool_call: ' + tc.name + '(' + truncate(tc.arguments, 100) + ')]'
+      ).join('');
+    }
+    return `<div class="session-msg session-msg-${type}">
+      <div class="session-msg-label">${escapeHtml(m.role)}${m.tool_call_id ? ' (' + m.tool_call_id + ')' : ''}</div>
+      ${escapeHtml(truncate(content, 1000))}
+    </div>`;
+  }).join('');
+
+  document.getElementById('session-modal').classList.remove('hidden');
+}
+
+async function deleteSession(id) {
+  if (!confirm('Delete session ' + id + '?')) return;
+  await fetch(API + '/api/sessions/' + id, { method: 'DELETE' });
+  loadSessions();
+}
+
+// --- Agents ---
+
+async function loadTools() {
+  if (allTools.length > 0) return;
+  try {
+    const res = await fetch(API + '/api/tools');
+    allTools = await res.json();
+  } catch(e) { /* ignore */ }
+}
+
+async function loadAgentsList() {
+  await loadTools();
+  const res = await fetch(API + '/api/agents');
+  const agents = await res.json();
+  allAgents = agents;
+  const container = document.getElementById('agents-list');
+
+  if (agents.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x1F47E;</div>' +
+      '<p>No custom agents yet. Create one to get started.</p></div>';
+    return;
+  }
+
+  container.innerHTML = agents.map(a => {
+    const toolCount = a.tools && a.tools.length > 0
+      ? a.tools.length + ' tools'
+      : 'all tools';
+    return `
+    <div class="card">
+      <div class="card-title">
+        <span>&#x1F47E;</span>
+        <span>${escapeHtml(a.name)}</span>
+        ${a.model ? '<span class="badge badge-lang">' + escapeHtml(a.model) + '</span>' : ''}
+      </div>
+      <div class="card-meta">${escapeHtml(a.id)} &middot; ${toolCount} &middot; ${formatDate(a.updated_at)}</div>
+      <div class="card-desc">${escapeHtml(a.description || 'No description')}</div>
+      <div class="card-desc" style="font-size:12px;color:var(--text-dimmer);max-height:60px;overflow:hidden">${escapeHtml(truncate(a.system_prompt || '', 200))}</div>
+      <div class="card-actions">
+        <button class="card-btn" onclick="editAgent('${escapeHtml(a.id)}')">Edit</button>
+        <button class="card-btn danger" onclick="deleteAgent('${escapeHtml(a.id)}')">Delete</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function showCreateAgent() {
+  await loadTools();
+  document.getElementById('agent-modal-title').textContent = 'Create Agent';
+  document.getElementById('agent-save-btn').textContent = 'Create';
+  document.getElementById('agent-edit-id').value = '';
+  document.getElementById('agent-name').value = '';
+  document.getElementById('agent-desc').value = '';
+  document.getElementById('agent-model').value = '';
+  document.getElementById('agent-prompt').value = '';
+  renderToolsChecklist([]);
+  document.getElementById('agent-modal').classList.remove('hidden');
+}
+
+async function editAgent(id) {
+  await loadTools();
+  const res = await fetch(API + '/api/agents/' + id);
+  if (!res.ok) return;
+  const a = await res.json();
+
+  document.getElementById('agent-modal-title').textContent = 'Edit Agent';
+  document.getElementById('agent-save-btn').textContent = 'Save';
+  document.getElementById('agent-edit-id').value = a.id;
+  document.getElementById('agent-name').value = a.name;
+  document.getElementById('agent-desc').value = a.description || '';
+  document.getElementById('agent-model').value = a.model || '';
+  document.getElementById('agent-prompt').value = a.system_prompt || '';
+  renderToolsChecklist(a.tools || []);
+  document.getElementById('agent-modal').classList.remove('hidden');
+}
+
+function renderToolsChecklist(selectedTools) {
+  const container = document.getElementById('agent-tools-checklist');
+  const selected = new Set(selectedTools);
+
+  container.innerHTML = allTools.map(t => `
+    <label class="tool-check">
+      <input type="checkbox" value="${escapeHtml(t.name)}" ${selected.has(t.name) ? 'checked' : ''}>
+      <div>
+        <div class="tool-check-name">${escapeHtml(t.name)}</div>
+        <div class="tool-check-desc">${escapeHtml(truncate(t.description, 80))}</div>
+      </div>
+    </label>
+  `).join('');
+}
+
+function getSelectedTools() {
+  const checks = document.querySelectorAll('#agent-tools-checklist input[type="checkbox"]:checked');
+  return Array.from(checks).map(c => c.value);
+}
+
+async function saveAgent() {
+  const editId = document.getElementById('agent-edit-id').value;
+  const name = document.getElementById('agent-name').value.trim();
+  const desc = document.getElementById('agent-desc').value.trim();
+  const model = document.getElementById('agent-model').value.trim();
+  const prompt = document.getElementById('agent-prompt').value;
+  const tools = getSelectedTools();
+
+  if (!name) {
+    alert('Name is required');
+    return;
+  }
+
+  const body = {
+    name,
+    description: desc,
+    system_prompt: prompt,
+    tools: tools,
+    model: model || undefined
+  };
+
+  let res;
+  if (editId) {
+    res = await fetch(API + '/api/agents/' + editId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+  } else {
+    res = await fetch(API + '/api/agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+  }
+
+  if (res.ok) {
+    hideModal('agent-modal');
+    loadAgentsList();
+  } else {
+    const err = await res.json();
+    alert('Error: ' + (err.error || 'Unknown error'));
+  }
+}
+
+async function deleteAgent(id) {
+  if (!confirm('Delete this agent?')) return;
+  await fetch(API + '/api/agents/' + id, { method: 'DELETE' });
+  loadAgentsList();
+}
+
+// --- Agent Profile Selector (on Agent run page) ---
+
+async function loadAgentProfiles() {
+  const res = await fetch(API + '/api/agents');
+  const agents = await res.json();
+  allAgents = agents;
+  const select = document.getElementById('agent-profile-select');
+  const currentVal = select.value;
+
+  // Keep "Default Agent" option, rebuild the rest
+  select.innerHTML = '<option value="">Primary Agent</option>';
+  agents.forEach(a => {
+    const opt = document.createElement('option');
+    opt.value = a.id;
+    opt.textContent = a.name;
+    select.appendChild(opt);
+  });
+
+  // Restore selection
+  if (currentVal) select.value = currentVal;
+}
+
+function onAgentProfileChange() {
+  const id = document.getElementById('agent-profile-select').value;
+  const info = document.getElementById('agent-profile-info');
+  if (!id) {
+    info.classList.add('hidden');
+    return;
+  }
+  const a = allAgents.find(a => a.id === id);
+  if (a) {
+    const toolInfo = a.tools && a.tools.length > 0
+      ? a.tools.length + ' tools: ' + a.tools.join(', ')
+      : 'all tools';
+    info.innerHTML = '<strong>' + escapeHtml(a.name) + '</strong> &mdash; ' +
+      escapeHtml(a.description || 'No description') +
+      '<br><small>' + escapeHtml(toolInfo) +
+      (a.model ? ' &middot; model: ' + escapeHtml(a.model) : '') + '</small>';
+    info.classList.remove('hidden');
+  }
+}
+
+// --- Config & Providers ---
+
+let currentConfig = {};
+
+async function loadConfig() {
+  const [cfgRes, provRes] = await Promise.all([
+    fetch(API + '/api/config'),
+    fetch(API + '/api/providers')
+  ]);
+  currentConfig = await cfgRes.json();
+  const providers = await provRes.json();
+  const cfg = currentConfig;
+
+  const container = document.getElementById('settings-form');
+  const providerOpts = providers.map(p =>
+    `<option value="${escapeHtml(p.id)}" ${cfg.provider === p.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
+  ).join('');
+
+  const modeOpts = ['exec', 'chat', 'agent'].map(m =>
+    `<option value="${m}" ${(cfg.default_prompt_mode || 'exec') === m ? 'selected' : ''}>${m}</option>`
+  ).join('');
+
+  const permOpts = ['read-only', 'workspace-write', 'full-access'].map(m =>
+    `<option value="${m}" ${(cfg.permission_mode || 'workspace-write') === m ? 'selected' : ''}>${m}</option>`
+  ).join('');
+
+  container.innerHTML = `
+    <div class="form-group">
+      <label>Provider</label>
+      <select id="cfg-provider" onchange="onProviderChange()">
+        ${providerOpts}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>API Key</label>
+      <input type="password" id="cfg-api-key" value="${escapeHtml(cfg.api_key || '')}" placeholder="Your API key">
+      <p class="form-hint">Leave unchanged to keep current key</p>
+    </div>
+    <div class="form-group">
+      <label>Model</label>
+      <input type="text" id="cfg-model" value="${escapeHtml(cfg.model || '')}" placeholder="e.g. gpt-4o-mini">
+    </div>
+    <div class="form-group">
+      <label>Base URL</label>
+      <input type="text" id="cfg-base-url" value="${escapeHtml(cfg.base_url || '')}" placeholder="Leave empty for default">
+      <p class="form-hint">Auto-set for known providers. Override for custom endpoints.</p>
+    </div>
+    <div class="form-group">
+      <label>Proxy</label>
+      <input type="text" id="cfg-proxy" value="${escapeHtml(cfg.proxy || '')}" placeholder="http://proxy:port">
+    </div>
+    <div class="form-group">
+      <label>Temperature</label>
+      <input type="number" id="cfg-temperature" value="${cfg.temperature || 0.2}" min="0" max="2" step="0.1">
+    </div>
+    <div class="form-group">
+      <label>Max Tokens</label>
+      <input type="number" id="cfg-max-tokens" value="${cfg.max_tokens || 2000}" min="100" max="128000" step="100">
+    </div>
+    <div class="form-group">
+      <label>Default Prompt Mode</label>
+      <select id="cfg-mode">${modeOpts}</select>
+    </div>
+    <div class="form-group">
+      <label>Permission Mode</label>
+      <select id="cfg-permission">${permOpts}</select>
+    </div>
+    <div class="form-group">
+      <label>Auto Execute Agent Tools</label>
+      <select id="cfg-auto-exec">
+        <option value="false" ${!cfg.auto_execute ? 'selected' : ''}>No (confirm each tool)</option>
+        <option value="true" ${cfg.auto_execute ? 'selected' : ''}>Yes (yolo mode)</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Allow Sudo</label>
+      <select id="cfg-sudo">
+        <option value="false" ${!cfg.allow_sudo ? 'selected' : ''}>No</option>
+        <option value="true" ${cfg.allow_sudo ? 'selected' : ''}>Yes</option>
+      </select>
+    </div>
+    <div class="form-group full-width">
+      <label>User Preferences</label>
+      <textarea id="cfg-preferences" rows="3" placeholder="Free-text preferences appended to the system prompt...">${escapeHtml(cfg.preferences || '')}</textarea>
+    </div>
+    <div class="settings-actions">
+      <button class="action-btn" onclick="saveSettings()">Save Settings</button>
+      <button class="cancel-btn" onclick="loadConfig()">Reset</button>
+    </div>
+  `;
+
+  document.getElementById('settings-status').classList.add('hidden');
+
+  // Update sidebar badge
+  document.getElementById('provider-badge').textContent =
+    cfg.provider + ' / ' + cfg.model;
+}
+
+function onProviderChange() {
+  // No-op for now; user can manually set model/url
+}
+
+async function saveSettings() {
+  const body = {
+    provider: document.getElementById('cfg-provider').value,
+    api_key: document.getElementById('cfg-api-key').value,
+    model: document.getElementById('cfg-model').value,
+    base_url: document.getElementById('cfg-base-url').value,
+    proxy: document.getElementById('cfg-proxy').value,
+    temperature: parseFloat(document.getElementById('cfg-temperature').value) || 0.2,
+    max_tokens: parseInt(document.getElementById('cfg-max-tokens').value) || 2000,
+    default_prompt_mode: document.getElementById('cfg-mode').value,
+    permission_mode: document.getElementById('cfg-permission').value,
+    auto_execute: document.getElementById('cfg-auto-exec').value === 'true',
+    allow_sudo: document.getElementById('cfg-sudo').value === 'true',
+    preferences: document.getElementById('cfg-preferences').value,
+  };
+
+  const statusEl = document.getElementById('settings-status');
+
+  try {
+    const res = await fetch(API + '/api/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (res.ok) {
+      statusEl.textContent = 'Settings saved successfully.';
+      statusEl.className = 'settings-status success';
+      statusEl.classList.remove('hidden');
+      // Reload to reflect new values
+      await loadConfig();
+      setTimeout(() => statusEl.classList.add('hidden'), 3000);
+    } else {
+      const err = await res.json();
+      statusEl.textContent = 'Error: ' + (err.error || 'Unknown error');
+      statusEl.className = 'settings-status error';
+      statusEl.classList.remove('hidden');
+    }
+  } catch(e) {
+    statusEl.textContent = 'Error: ' + e.message;
+    statusEl.className = 'settings-status error';
+    statusEl.classList.remove('hidden');
+  }
+}
+
+async function loadProviders() {
+  const res = await fetch(API + '/api/providers');
+  const providers = await res.json();
+  const container = document.getElementById('providers-list');
+
+  container.innerHTML = providers.map(p => `
+    <div class="card" style="cursor:pointer" onclick="selectProvider('${escapeHtml(p.id)}', '${escapeHtml(p.default_model)}')">
+      <div class="card-title">${escapeHtml(p.name)}</div>
+      <div class="card-meta">${escapeHtml(p.id)} &middot; Default: <code>${escapeHtml(p.default_model)}</code></div>
+      <div class="card-desc">${p.needs_api_key ? 'Requires API key' : 'No API key needed (local)'}</div>
+    </div>
+  `).join('');
+}
+
+function selectProvider(id, defaultModel) {
+  const provSelect = document.getElementById('cfg-provider');
+  const modelInput = document.getElementById('cfg-model');
+  if (provSelect) provSelect.value = id;
+  if (modelInput) modelInput.value = defaultModel;
+  // Scroll to top of settings
+  document.getElementById('settings-form').scrollIntoView({ behavior: 'smooth' });
+}
+
+// --- Memory Stats ---
+
+async function loadMemoryStats() {
+  try {
+    const res = await fetch(API + '/api/memory/stats');
+    const stats = await res.json();
+    const el = document.getElementById('memory-stats');
+    if (stats.available) {
+      el.textContent = `Memory: ${stats.messages}m / ${stats.skills}s / ${stats.sessions}x`;
+    } else {
+      el.textContent = 'Memory: offline';
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+// --- Modal ---
+
+function hideModal(id) {
+  document.getElementById(id).classList.add('hidden');
+}
+
+// Close modals on backdrop click
+document.querySelectorAll('.modal').forEach(modal => {
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) modal.classList.add('hidden');
+  });
+});
+
+// --- Utilities ---
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function truncate(str, max) {
+  if (!str) return '';
+  if (str.length <= max) return str;
+  return str.slice(0, max) + '...';
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diff = now - d;
+
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+  if (diff < 604800000) return Math.floor(diff / 86400000) + 'd ago';
+  return d.toLocaleDateString();
+}
+
+// --- Think-aware streamer ---
+// Streams content into a container, rendering <think> blocks into collapsible
+// "thinking" elements and normal text into assistant message bubbles.
+
+function createThinkStreamer(container) {
+  let full = '';
+  let buffer = '';
+  let insideThink = false;
+  let thinkEl = null;
+  let msgEl = null;
+  let msgRawText = '';     // raw text for current message (for post-processing)
+
+  function ensureMsgEl() {
+    if (!msgEl) {
+      msgEl = document.createElement('div');
+      msgEl.className = 'msg msg-assistant msg-streaming';
+      msgRawText = '';
+      container.appendChild(msgEl);
+    }
+    return msgEl;
+  }
+
+  function ensureThinkEl() {
+    if (!thinkEl) {
+      thinkEl = document.createElement('details');
+      thinkEl.className = 'msg msg-think-block';
+      thinkEl.innerHTML = '<summary class="think-summary">Thinking...</summary>';
+      const content = document.createElement('div');
+      content.className = 'think-content';
+      thinkEl.appendChild(content);
+      container.appendChild(thinkEl);
+    }
+    return thinkEl.querySelector('.think-content');
+  }
+
+  function finalizeMsgEl() {
+    if (msgEl && msgRawText) {
+      msgEl.innerHTML = renderFormattedText(msgRawText);
+      msgEl.classList.remove('msg-streaming');
+      msgEl = null;
+      msgRawText = '';
+    } else if (msgEl) {
+      msgEl.classList.remove('msg-streaming');
+      msgEl = null;
+    }
+  }
+
+  return {
+    push(data) {
+      full += data;
+      buffer += data;
+
+      while (true) {
+        if (!insideThink) {
+          const openIdx = buffer.indexOf('<think>');
+          if (openIdx === -1) break;
+          const before = buffer.substring(0, openIdx);
+          if (before) {
+            ensureMsgEl().textContent += before;
+            msgRawText += before;
+          }
+          buffer = buffer.substring(openIdx + 7);
+          insideThink = true;
+          finalizeMsgEl();
+          thinkEl = null;
+        }
+        if (insideThink) {
+          // Look for explicit </think> close tag
+          const closeIdx = buffer.indexOf('</think>');
+          if (closeIdx !== -1) {
+            const thinkContent = buffer.substring(0, closeIdx);
+            if (thinkContent) {
+              ensureThinkEl().textContent += thinkContent;
+            }
+            buffer = buffer.substring(closeIdx + 8);
+            insideThink = false;
+            thinkEl = null;
+            continue; // keep processing buffer
+          }
+
+          // Heuristic: some models never send </think>.
+          // Detect end of thinking by double newline (paragraph break)
+          // which signals the model switching from internal reasoning to response.
+          const dblNewline = buffer.indexOf('\n\n');
+          if (dblNewline !== -1 && buffer.length > dblNewline + 2) {
+            // Flush think content up to the break
+            const thinkContent = buffer.substring(0, dblNewline);
+            if (thinkContent) {
+              ensureThinkEl().textContent += thinkContent;
+            }
+            buffer = buffer.substring(dblNewline + 2);
+            insideThink = false;
+            thinkEl = null;
+            continue; // process remaining buffer as normal text
+          }
+
+          // Still accumulating think content — flush what we have
+          if (buffer) {
+            ensureThinkEl().textContent += buffer;
+            buffer = '';
+            container.scrollTop = container.scrollHeight;
+          }
+          break;
+        }
+      }
+
+      if (!insideThink && buffer) {
+        ensureMsgEl().textContent += buffer;
+        msgRawText += buffer;
+        buffer = '';
+        container.scrollTop = container.scrollHeight;
+      }
+    },
+
+    finish() {
+      if (buffer) {
+        if (insideThink) {
+          ensureThinkEl().textContent += buffer;
+        } else {
+          ensureMsgEl().textContent += buffer;
+          msgRawText += buffer;
+        }
+        buffer = '';
+      }
+      finalizeMsgEl();
+    },
+
+    fullText() {
+      return full;
+    }
+  };
+}
+
+// Render text with code blocks and inline code as formatted HTML
+function renderFormattedText(text) {
+  const parts = [];
+  let remaining = text;
+
+  while (remaining) {
+    // Find next fenced code block
+    const fenceMatch = remaining.match(/```([a-zA-Z_]*)\n([\s\S]*?)```/);
+    if (!fenceMatch) {
+      parts.push(renderInlineFormatting(escapeHtml(remaining)));
+      break;
+    }
+
+    const idx = remaining.indexOf(fenceMatch[0]);
+    // Text before the code block
+    if (idx > 0) {
+      parts.push(renderInlineFormatting(escapeHtml(remaining.substring(0, idx))));
+    }
+
+    // The code block
+    const lang = fenceMatch[1] || '';
+    const code = fenceMatch[2];
+    parts.push(
+      '<pre>' +
+      (lang ? '<code-lang>' + escapeHtml(lang) + '</code-lang>' : '') +
+      '<code>' + escapeHtml(code) + '</code></pre>'
+    );
+
+    remaining = remaining.substring(idx + fenceMatch[0].length);
+  }
+
+  return parts.join('');
+}
+
+// Render inline formatting: `code`, **bold**, *italic*
+function renderInlineFormatting(html) {
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Bold
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  // Italic (single *)
+  html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+  // Preserve newlines
+  html = html.replace(/\n/g, '<br>');
+  return html;
+}
+
+// --- Builder (AI-assisted creation) ---
+
+let builderType = ''; // 'skill' or 'agent'
+let builderMessages = []; // conversation history
+let builderStreaming = false;
+let builderResult = null; // parsed definition when detected
+
+function openSkillBuilder() {
+  builderType = 'skill';
+  builderMessages = [];
+  builderResult = null;
+  document.getElementById('builder-title').textContent = 'AI Skill Builder';
+  document.getElementById('builder-input').placeholder = 'Describe the skill you want to create...';
+  resetBuilderUI();
+  document.getElementById('builder-modal').classList.remove('hidden');
+  document.getElementById('builder-input').focus();
+}
+
+function openAgentBuilder() {
+  builderType = 'agent';
+  builderMessages = [];
+  builderResult = null;
+  document.getElementById('builder-title').textContent = 'AI Agent Builder';
+  document.getElementById('builder-input').placeholder = 'Describe the agent you want to create...';
+  resetBuilderUI();
+  document.getElementById('builder-modal').classList.remove('hidden');
+  document.getElementById('builder-input').focus();
+}
+
+function resetBuilderUI() {
+  document.getElementById('builder-messages').innerHTML = '';
+  document.getElementById('builder-save-bar').classList.add('hidden');
+  document.getElementById('builder-input').value = '';
+  document.getElementById('builder-send-btn').disabled = false;
+}
+
+function closeBuilder() {
+  document.getElementById('builder-modal').classList.add('hidden');
+  builderStreaming = false;
+}
+
+// "Finish & Save" — sends a finalize message, then auto-saves once we get the definition
+function finishBuilder() {
+  if (builderStreaming) return;
+
+  const finishMsg = builderType === 'skill'
+    ? 'Please finalize the skill now. Output the complete skill_definition JSON block with all fields (name, description, language, script, parameters) so it can be saved.'
+    : 'Please finalize the agent now. Output the complete agent_definition JSON block with all fields (name, description, system_prompt, tools, model) so it can be saved.';
+
+  // Inject as user message
+  builderMessages.push({ role: 'user', content: finishMsg });
+  addMessage('builder-messages', 'Finishing and saving...', 'user');
+  builderStreaming = true;
+  document.getElementById('builder-send-btn').disabled = true;
+  document.getElementById('builder-finish-btn').disabled = true;
+
+  const area = document.getElementById('builder-messages');
+  const streamer = createThinkStreamer(area);
+  const endpoint = builderType === 'skill' ? '/api/build/skill' : '/api/build/agent';
+
+  fetchSSE(endpoint, { messages: builderMessages }, {
+    content: (data) => {
+      streamer.push(data);
+    },
+    done: async () => {
+      streamer.finish();
+      builderStreaming = false;
+      document.getElementById('builder-send-btn').disabled = false;
+      document.getElementById('builder-finish-btn').disabled = false;
+      builderMessages.push({ role: 'assistant', content: streamer.fullText() });
+
+      const def = extractDefinition(streamer.fullText(), builderType);
+      if (def) {
+        builderResult = def;
+        // Auto-save
+        await saveBuilderResult();
+      } else {
+        // Show the save bar so user can retry or edit
+        addMessage('builder-messages',
+          'Could not auto-extract the definition. You can try again or use "Edit first" to save manually.',
+          'error');
+        document.getElementById('builder-save-bar').classList.remove('hidden');
+        document.getElementById('builder-save-label').textContent = 'Auto-save failed — try manually:';
+      }
+      area.scrollTop = area.scrollHeight;
+    },
+    error: (data) => {
+      streamer.finish();
+      addMessage('builder-messages', 'Error: ' + data, 'error');
+      builderStreaming = false;
+      document.getElementById('builder-send-btn').disabled = false;
+      document.getElementById('builder-finish-btn').disabled = false;
+    }
+  });
+}
+
+function handleBuilderKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendBuilderMessage();
+  }
+}
+
+function sendBuilderMessage() {
+  const input = document.getElementById('builder-input');
+  const message = input.value.trim();
+  if (!message || builderStreaming) return;
+
+  builderMessages.push({ role: 'user', content: message });
+  addMessage('builder-messages', message, 'user');
+  input.value = '';
+  autoResize(input);
+  builderStreaming = true;
+  document.getElementById('builder-send-btn').disabled = true;
+
+  const area = document.getElementById('builder-messages');
+  const streamer = createThinkStreamer(area);
+
+  const endpoint = builderType === 'skill' ? '/api/build/skill' : '/api/build/agent';
+
+  fetchSSE(endpoint, { messages: builderMessages }, {
+    content: (data) => {
+      streamer.push(data);
+    },
+    done: () => {
+      streamer.finish();
+      builderStreaming = false;
+      document.getElementById('builder-send-btn').disabled = false;
+      builderMessages.push({ role: 'assistant', content: streamer.fullText() });
+
+      // Check if the response contains a definition block
+      const def = extractDefinition(streamer.fullText(), builderType);
+      if (def) {
+        builderResult = def;
+        document.getElementById('builder-save-label').textContent =
+          'Definition ready — "' + (def.name || 'unnamed') + '"';
+        document.getElementById('builder-save-bar').classList.remove('hidden');
+        area.scrollTop = area.scrollHeight;
+      }
+    },
+    error: (data) => {
+      streamer.finish();
+      addMessage('builder-messages', 'Error: ' + data, 'error');
+      builderStreaming = false;
+      document.getElementById('builder-send-btn').disabled = false;
+    }
+  });
+}
+
+function extractDefinition(text, type) {
+  const marker = type === 'skill' ? 'skill_definition' : 'agent_definition';
+  const skillKeys = ['name', 'script', 'language'];
+  const agentKeys = ['name', 'system_prompt'];
+  const expectedKeys = type === 'skill' ? skillKeys : agentKeys;
+
+  // 1. Try labeled block: ```skill_definition or ```agent_definition
+  let match = text.match(new RegExp('```' + marker + '[\\s\\n]+([\\s\\S]*?)```'));
+  if (match) {
+    const parsed = tryParseJSON(match[1]);
+    if (parsed && hasKeys(parsed, expectedKeys)) return parsed;
+  }
+
+  // 2. Try ```json block
+  match = text.match(/```json[\s\n]+([\s\S]*?)```/);
+  if (match) {
+    const parsed = tryParseJSON(match[1]);
+    if (parsed && hasKeys(parsed, expectedKeys)) return parsed;
+  }
+
+  // 3. Try any ``` fenced block that contains JSON
+  const fencedBlocks = text.matchAll(/```[a-z_]*[\s\n]+([\s\S]*?)```/g);
+  for (const m of fencedBlocks) {
+    const parsed = tryParseJSON(m[1]);
+    if (parsed && hasKeys(parsed, expectedKeys)) return parsed;
+  }
+
+  // 4. Try bare JSON object in the text that has the expected keys
+  // Find all { ... } blocks at the top level
+  const jsonCandidates = findJSONObjects(text);
+  for (const candidate of jsonCandidates) {
+    const parsed = tryParseJSON(candidate);
+    if (parsed && hasKeys(parsed, expectedKeys)) return parsed;
+  }
+
+  return null;
+}
+
+function tryParseJSON(str) {
+  try {
+    return JSON.parse(str.trim());
+  } catch(e) {
+    return null;
+  }
+}
+
+function hasKeys(obj, keys) {
+  if (!obj || typeof obj !== 'object') return false;
+  return keys.every(k => k in obj);
+}
+
+// Find JSON object strings in text by matching balanced braces
+function findJSONObjects(text) {
+  const results = [];
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] === '{') {
+      let depth = 0;
+      let start = i;
+      let inString = false;
+      let escaped = false;
+      for (let j = i; j < text.length; j++) {
+        const c = text[j];
+        if (escaped) { escaped = false; continue; }
+        if (c === '\\' && inString) { escaped = true; continue; }
+        if (c === '"') { inString = !inString; continue; }
+        if (inString) continue;
+        if (c === '{') depth++;
+        else if (c === '}') {
+          depth--;
+          if (depth === 0) {
+            const candidate = text.substring(start, j + 1);
+            if (candidate.length > 20) results.push(candidate);
+            i = j;
+            break;
+          }
+        }
+      }
+    }
+    i++;
+  }
+  return results;
+}
+
+async function saveBuilderResult() {
+  if (!builderResult) return;
+
+  let res;
+  if (builderType === 'skill') {
+    res = await fetch(API + '/api/skills', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(builderResult)
+    });
+  } else {
+    res = await fetch(API + '/api/agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(builderResult)
+    });
+  }
+
+  if (res.ok) {
+    document.getElementById('builder-save-bar').classList.add('hidden');
+    addMessage('builder-messages', 'Saved successfully!', 'assistant');
+    // Refresh the list
+    if (builderType === 'skill') loadSkills();
+    else loadAgentsList();
+  } else {
+    const err = await res.json();
+    addMessage('builder-messages', 'Save failed: ' + (err.error || 'Unknown error'), 'error');
+  }
+}
+
+function editBuilderResult() {
+  if (!builderResult) return;
+  document.getElementById('builder-save-bar').classList.add('hidden');
+  closeBuilder();
+
+  // Open the manual form pre-filled with the builder result
+  if (builderType === 'skill') {
+    document.getElementById('skill-modal-title').textContent = 'Create Skill';
+    document.getElementById('skill-save-btn').textContent = 'Create';
+    document.getElementById('skill-edit-name').value = '';
+    document.getElementById('skill-name').value = builderResult.name || '';
+    document.getElementById('skill-name').disabled = false;
+    document.getElementById('skill-desc').value = builderResult.description || '';
+    document.getElementById('skill-lang').value = builderResult.language || 'bash';
+    document.getElementById('skill-script').value = builderResult.script || '';
+    try {
+      document.getElementById('skill-params').value =
+        builderResult.parameters ? JSON.stringify(builderResult.parameters, null, 2) : '';
+    } catch(e) {
+      document.getElementById('skill-params').value = '';
+    }
+    document.getElementById('skill-modal').classList.remove('hidden');
+  } else {
+    showCreateAgent();
+    document.getElementById('agent-name').value = builderResult.name || '';
+    document.getElementById('agent-desc').value = builderResult.description || '';
+    document.getElementById('agent-model').value = builderResult.model || '';
+    document.getElementById('agent-prompt').value = builderResult.system_prompt || '';
+    // Check the specified tools
+    setTimeout(() => {
+      if (builderResult.tools && builderResult.tools.length > 0) {
+        const toolSet = new Set(builderResult.tools);
+        document.querySelectorAll('#agent-tools-checklist input[type="checkbox"]').forEach(cb => {
+          cb.checked = toolSet.has(cb.value);
+        });
+      }
+    }, 100);
+  }
+}
+
+// --- Init ---
+
+loadMemoryStats();
+loadConfig().catch(() => {});
