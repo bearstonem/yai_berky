@@ -1432,13 +1432,14 @@ async function saveBuilderResult() {
   }
 }
 
-function editBuilderResult() {
+async function editBuilderResult() {
   if (!builderResult) return;
   document.getElementById('builder-save-bar').classList.add('hidden');
   closeBuilder();
 
-  // Open the manual form pre-filled with the builder result
   if (builderType === 'skill') {
+    // Switch to skills page first so the modal is visible
+    switchPage('skills');
     document.getElementById('skill-modal-title').textContent = 'Create Skill';
     document.getElementById('skill-save-btn').textContent = 'Create';
     document.getElementById('skill-edit-name').value = '';
@@ -1455,20 +1456,21 @@ function editBuilderResult() {
     }
     document.getElementById('skill-modal').classList.remove('hidden');
   } else {
-    showCreateAgent();
+    // Switch to agents page first so the modal is visible
+    switchPage('agents');
+    // Wait for showCreateAgent to finish (it loads tools async)
+    await showCreateAgent();
+    // Now populate with builder result
     document.getElementById('agent-name').value = builderResult.name || '';
     document.getElementById('agent-desc').value = builderResult.description || '';
     document.getElementById('agent-model').value = builderResult.model || '';
     document.getElementById('agent-prompt').value = builderResult.system_prompt || '';
-    // Check the specified tools
-    setTimeout(() => {
-      if (builderResult.tools && builderResult.tools.length > 0) {
-        const toolSet = new Set(builderResult.tools);
-        document.querySelectorAll('#agent-tools-checklist input[type="checkbox"]').forEach(cb => {
-          cb.checked = toolSet.has(cb.value);
-        });
-      }
-    }, 100);
+    if (builderResult.tools && builderResult.tools.length > 0) {
+      const toolSet = new Set(builderResult.tools);
+      document.querySelectorAll('#agent-tools-checklist input[type="checkbox"]').forEach(cb => {
+        cb.checked = toolSet.has(cb.value);
+      });
+    }
   }
 }
 
