@@ -112,15 +112,31 @@ function sendAgent() {
 
   fetchSSE('/api/agent', body, {
     thinking: (data) => {
-      renderFormattedResponse(area, data, 'thinking');
+      try {
+        const info = JSON.parse(data);
+        const tag = info.agent_name ? agentTag(info.agent_name) : '';
+        if (tag) {
+          const wrapper = document.createElement('div');
+          wrapper.className = 'msg-sub-agent-group';
+          wrapper.innerHTML = tag;
+          area.appendChild(wrapper);
+          renderFormattedResponse(wrapper, info.content || data, 'thinking');
+        } else {
+          renderFormattedResponse(area, info.content || data, 'thinking');
+        }
+      } catch(e) {
+        renderFormattedResponse(area, data, 'thinking');
+      }
       area.scrollTop = area.scrollHeight;
     },
     tool_call: (data) => {
       try {
         const tc = JSON.parse(data);
         const el = document.createElement('div');
-        el.className = 'msg msg-tool';
-        el.innerHTML = '<div class="tool-name">' + escapeHtml(tc.name) + '</div>' +
+        el.className = 'msg msg-tool' + (tc.agent_id ? ' msg-sub-agent' : '');
+        const tag = tc.agent_name ? agentTag(tc.agent_name) : '';
+        el.innerHTML = tag +
+          '<div class="tool-name">' + escapeHtml(tc.name) + '</div>' +
           '<div>' + escapeHtml(truncate(tc.arguments, 300)) + '</div>';
         area.appendChild(el);
         area.scrollTop = area.scrollHeight;
@@ -129,15 +145,80 @@ function sendAgent() {
       }
     },
     tool_result: (data) => {
-      const el = document.createElement('div');
-      el.className = 'msg msg-tool';
-      el.innerHTML = '<div class="tool-result">' + escapeHtml(truncate(data, 500)) + '</div>';
-      area.appendChild(el);
+      try {
+        const info = JSON.parse(data);
+        const el = document.createElement('div');
+        el.className = 'msg msg-tool' + (info.agent_id ? ' msg-sub-agent' : '');
+        const tag = info.agent_name ? agentTag(info.agent_name) : '';
+        el.innerHTML = tag +
+          '<div class="tool-result">' + escapeHtml(truncate(info.content || data, 500)) + '</div>';
+        area.appendChild(el);
+      } catch(e) {
+        const el = document.createElement('div');
+        el.className = 'msg msg-tool';
+        el.innerHTML = '<div class="tool-result">' + escapeHtml(truncate(data, 500)) + '</div>';
+        area.appendChild(el);
+      }
       area.scrollTop = area.scrollHeight;
     },
     answer: (data) => {
-      renderFormattedResponse(area, data);
+      try {
+        const info = JSON.parse(data);
+        if (info.agent_name) {
+          const wrapper = document.createElement('div');
+          wrapper.className = 'msg-sub-agent-group';
+          wrapper.innerHTML = agentTag(info.agent_name);
+          area.appendChild(wrapper);
+          renderFormattedResponse(wrapper, info.content || data);
+        } else {
+          renderFormattedResponse(area, info.content || data);
+        }
+      } catch(e) {
+        renderFormattedResponse(area, data);
+      }
       area.scrollTop = area.scrollHeight;
+    },
+    sub_agent_start: (data) => {
+      try {
+        const info = JSON.parse(data);
+        const el = document.createElement('div');
+        el.className = 'msg msg-sub-agent-start';
+        el.innerHTML = '<span class="sub-agent-icon">&#x1F6F8;</span> ' +
+          '<strong>' + escapeHtml(info.agent_name) + '</strong> started' +
+          '<div class="sub-agent-task">' + escapeHtml(info.task) + '</div>';
+        area.appendChild(el);
+        area.scrollTop = area.scrollHeight;
+      } catch(e) {}
+    },
+    sub_agent_done: (data) => {
+      try {
+        const info = JSON.parse(data);
+        const el = document.createElement('div');
+        el.className = 'msg msg-sub-agent-done';
+        el.innerHTML = '<span class="sub-agent-icon">&#x2705;</span> ' +
+          '<strong>' + escapeHtml(info.agent_name) + '</strong> ' +
+          escapeHtml(info.status);
+        area.appendChild(el);
+        area.scrollTop = area.scrollHeight;
+      } catch(e) {}
+    },
+    escalation: (data) => {
+      try {
+        const info = JSON.parse(data);
+        const el = document.createElement('div');
+        el.className = 'msg msg-escalation';
+        const tag = info.agent_name ? agentTag(info.agent_name) : '';
+        el.innerHTML = tag +
+          '<div class="escalation-question">' + escapeHtml(info.question) + '</div>' +
+          '<div class="escalation-input">' +
+          '<input type="text" class="escalation-field" placeholder="Type your response..." ' +
+          'onkeydown="if(event.key===\'Enter\')respondToEscalation(this)">' +
+          '<button class="action-btn" onclick="respondToEscalation(this.previousElementSibling)">Respond</button>' +
+          '</div>';
+        area.appendChild(el);
+        area.scrollTop = area.scrollHeight;
+        el.querySelector('.escalation-field').focus();
+      } catch(e) {}
     },
     error: (data) => {
       addMessage('agent-messages', 'Error: ' + data, 'error');
@@ -854,6 +935,30 @@ document.querySelectorAll('.modal').forEach(modal => {
 });
 
 // --- Utilities ---
+
+async function respondToEscalation(inputEl) {
+  const response = inputEl.value.trim();
+  if (!response) return;
+
+  // Disable the input
+  const container = inputEl.closest('.msg-escalation');
+  container.querySelector('.escalation-input').innerHTML =
+    '<em>You responded: ' + escapeHtml(response) + '</em>';
+
+  try {
+    await fetch(API + '/api/agent/respond', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ response })
+    });
+  } catch(e) {
+    console.error('Failed to send escalation response:', e);
+  }
+}
+
+function agentTag(name) {
+  return '<span class="sub-agent-tag">&#x1F6F8; ' + escapeHtml(name) + '</span>';
+}
 
 function escapeHtml(str) {
   const div = document.createElement('div');

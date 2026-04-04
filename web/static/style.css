@@ -190,6 +190,106 @@ body {
   border-bottom-right-radius: 4px;
 }
 
+/* Sub-agent delegation */
+.msg-sub-agent {
+  margin-left: 20px;
+  border-left: 3px solid var(--accent);
+}
+
+.msg-sub-agent-group {
+  margin-left: 20px;
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+  margin-bottom: 4px;
+}
+
+.msg-sub-agent-start {
+  align-self: flex-start;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 13px;
+  max-width: 90%;
+  margin-left: 20px;
+}
+
+.msg-sub-agent-start .sub-agent-task {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.msg-sub-agent-done {
+  align-self: flex-start;
+  background: rgba(63, 185, 80, 0.1);
+  border: 1px solid var(--success);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  font-size: 13px;
+  max-width: 90%;
+  margin-left: 20px;
+}
+
+.sub-agent-icon { margin-right: 4px; }
+
+/* Escalation (agent asking user a question) */
+.msg-escalation {
+  align-self: flex-start;
+  background: rgba(210, 153, 34, 0.1);
+  border: 1px solid var(--warning);
+  border-left: 4px solid var(--warning);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  max-width: 90%;
+  font-size: 14px;
+}
+
+.escalation-question {
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.escalation-input {
+  display: flex;
+  gap: 8px;
+}
+
+.escalation-field {
+  flex: 1;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius);
+  font-size: 13px;
+  outline: none;
+}
+
+.escalation-field:focus { border-color: var(--warning); }
+
+.sub-agent-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 10px;
+  background: var(--accent);
+  color: white;
+  margin-bottom: 4px;
+}
+
+.msg-profile-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.15);
+  vertical-align: middle;
+}
+
 .msg-assistant {
   align-self: flex-start;
   background: var(--bg-elevated);
