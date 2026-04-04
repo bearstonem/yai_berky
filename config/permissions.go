@@ -78,6 +78,10 @@ func IsToolAllowed(toolName string, mode PermissionMode) bool {
 		if toolName == "create_skill" || toolName == "list_skills" || toolName == "remove_skill" {
 			return mode >= PermWorkspaceWrite
 		}
+		// Agent management, delegation, and escalation tools
+		if toolName == "create_agent" || toolName == "delegate_task" || toolName == "escalate_to_user" {
+			return mode >= PermWorkspaceWrite
+		}
 		// Unknown tools require full access.
 		return mode >= PermFullAccess
 	}

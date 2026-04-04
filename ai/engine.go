@@ -48,10 +48,13 @@ type Engine struct {
 	remoteInfo    *RemoteSystemInfo
 	session       *session.Session
 	onUsage       func(inputTokens, outputTokens int)
-	modelOverride string // runtime model override; empty = use config
-	agentProfile  *agent.Profile // custom agent profile; nil = default
-	memoryStore   *memory.Store
-	embedder      memory.EmbeddingProvider
+	modelOverride   string // runtime model override; empty = use config
+	agentProfile    *agent.Profile // custom agent profile; nil = default
+	memoryStore     *memory.Store
+	embedder        memory.EmbeddingProvider
+	homeDir         string
+	delegationChain []string // agent IDs in the delegation path; empty = primary
+	escalationChan  chan string // receives user response to escalation
 }
 
 func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
@@ -91,7 +94,7 @@ func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
 		}
 	}
 
-	return &Engine{
+	e := &Engine{
 		mode:          mode,
 		config:        cfg,
 		provider:      provider,
@@ -104,9 +107,18 @@ func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
 		toolExecutor:  te,
 		pipe:          "",
 		running:       false,
-		memoryStore:   memStore,
-		embedder:      embedder,
-	}, nil
+		memoryStore:    memStore,
+		embedder:       embedder,
+		homeDir:        homeDir,
+		escalationChan: make(chan string),
+	}
+
+	// Wire agent management callbacks
+	te.SetOnCreateAgent(e.executeCreateAgent)
+	te.SetOnDelegateTask(e.executeDelegation)
+	te.SetOnEscalateToUser(e.executeEscalation)
+
+	return e, nil
 }
 
 func newToolExecutorWithHooksAndIntegrations(allowSudo bool, homeDir, workDir string, permMode config.PermissionMode, hooks []config.HookConfig, integrations []config.IntegrationConfig) *ToolExecutor {
@@ -903,28 +915,251 @@ Skills prefixed with skill_ appear as regular tools you can call.
 		prompt += "- You may use sudo when commands require elevated privileges.\n"
 	}
 
+	// Add delegation instructions and available sub-agents
+	if len(e.delegationChain) == 0 {
+		prompt += e.prepareAvailableAgents()
+	}
+
 	return prompt
 }
 
 // agentTools returns the tool set for the current agent, filtered by profile if set.
+// Sub-agents can delegate to other agents but not create new ones.
 func (e *Engine) agentTools() []Tool {
 	all := e.toolExecutor.AllTools()
-	if e.agentProfile == nil || len(e.agentProfile.Tools) == 0 {
-		return all
+
+	var tools []Tool
+	if e.agentProfile != nil && len(e.agentProfile.Tools) > 0 {
+		allowed := make(map[string]bool, len(e.agentProfile.Tools))
+		for _, name := range e.agentProfile.Tools {
+			allowed[name] = true
+		}
+		for _, t := range all {
+			if allowed[t.Name] {
+				tools = append(tools, t)
+			}
+		}
+	} else {
+		tools = all
 	}
 
-	allowed := make(map[string]bool, len(e.agentProfile.Tools))
-	for _, name := range e.agentProfile.Tools {
-		allowed[name] = true
+	// Sub-agents can delegate but not create new agents
+	if len(e.delegationChain) > 0 {
+		var filtered []Tool
+		for _, t := range tools {
+			if t.Name != "create_agent" {
+				filtered = append(filtered, t)
+			}
+		}
+		return filtered
 	}
 
-	var filtered []Tool
-	for _, t := range all {
-		if allowed[t.Name] {
-			filtered = append(filtered, t)
+	return tools
+}
+
+// executeCreateAgent creates a new persistent sub-agent profile.
+func (e *Engine) executeCreateAgent(name, description, systemPrompt string, tools []string) (string, error) {
+	p := &agent.Profile{
+		Name:         name,
+		Description:  description,
+		SystemPrompt: systemPrompt,
+		Tools:        tools,
+	}
+	if err := agent.Save(e.homeDir, p); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Agent %q created (id: %s). You can now delegate tasks to it with delegate_task.", name, p.ID), nil
+}
+
+// executeDelegation runs a sub-agent with the given profile and task.
+// It forwards sub-agent events to the parent's channel and returns the final answer.
+// Uses cycle detection instead of depth limits to allow collaborative multi-agent workflows.
+func (e *Engine) executeDelegation(agentID, task, sharedContext string) (string, error) {
+	// Cycle detection: check if this agent is already in the chain
+	for _, id := range e.delegationChain {
+		if id == agentID {
+			return "", fmt.Errorf("cycle detected: agent %q is already in the delegation chain %v", agentID, e.delegationChain)
 		}
 	}
-	return filtered
+	// Safety cap on chain length
+	if len(e.delegationChain) >= 6 {
+		return "", fmt.Errorf("delegation chain too deep (%d agents): %v", len(e.delegationChain), e.delegationChain)
+	}
+
+	profile, err := agent.Load(e.homeDir, agentID)
+	if err != nil {
+		return "", fmt.Errorf("agent %q not found: %w", agentID, err)
+	}
+
+	// Notify: sub-agent starting
+	e.agentChannel <- AgentEvent{
+		Type:      AgentEventSubAgentStart,
+		AgentID:   agentID,
+		AgentName: profile.Name,
+		Content:   task,
+	}
+
+	// Create independent sub-engine
+	subEngine, err := NewEngine(AgentEngineMode, e.config)
+	if err != nil {
+		return "", fmt.Errorf("creating sub-engine: %w", err)
+	}
+	subEngine.SetAgentProfile(profile)
+
+	// Build the delegation chain for the sub-engine
+	myID := "__primary__"
+	if e.agentProfile != nil {
+		myID = e.agentProfile.ID
+	}
+	subEngine.delegationChain = append(append([]string{}, e.delegationChain...), myID)
+	subEngine.StartNewSession()
+
+	// Inject shared context if provided
+	if sharedContext != "" {
+		subEngine.appendUserMessage("## Context from delegating agent\n" + sharedContext)
+		subEngine.appendAgentMessage(Message{Role: "assistant", Content: "Understood. I have the shared context. Proceeding with the task."})
+	}
+
+	// Run sub-agent in background
+	done := make(chan error, 1)
+	go func() {
+		done <- subEngine.AgentCompletion(task, true)
+	}()
+
+	// Forward sub-agent events to parent channel, tagged with agent identity
+	var finalAnswer string
+	subCh := subEngine.GetAgentChannel()
+	for event := range subCh {
+		event.AgentID = agentID
+		event.AgentName = profile.Name
+
+		switch event.Type {
+		case AgentEventAnswer:
+			finalAnswer = event.Content
+			e.agentChannel <- event
+		case AgentEventDone:
+			// Don't forward Done — sub-agent done != parent done
+		case AgentEventEscalation:
+			// Forward escalation to parent's channel (bubbles up to user)
+			e.agentChannel <- event
+			// Relay user's response back down to the sub-agent
+			go func() {
+				response := <-e.escalationChan
+				subEngine.RespondToEscalation(response)
+			}()
+		default:
+			e.agentChannel <- event
+		}
+	}
+
+	// Wait for completion
+	if err := <-done; err != nil {
+		e.agentChannel <- AgentEvent{
+			Type:      AgentEventSubAgentDone,
+			AgentID:   agentID,
+			AgentName: profile.Name,
+			Content:   "failed: " + err.Error(),
+		}
+		return "", err
+	}
+
+	e.agentChannel <- AgentEvent{
+		Type:      AgentEventSubAgentDone,
+		AgentID:   agentID,
+		AgentName: profile.Name,
+		Content:   "completed",
+	}
+
+	if finalAnswer == "" {
+		finalAnswer = "(sub-agent completed without a final answer)"
+	}
+	return finalAnswer, nil
+}
+
+// executeEscalation pauses the agent and asks the user a question.
+func (e *Engine) executeEscalation(question, context string) (string, error) {
+	content := question
+	if context != "" {
+		content = question + "\n\nContext: " + context
+	}
+
+	agentID := ""
+	agentName := ""
+	if e.agentProfile != nil {
+		agentID = e.agentProfile.ID
+		agentName = e.agentProfile.Name
+	}
+
+	e.agentChannel <- AgentEvent{
+		Type:      AgentEventEscalation,
+		Content:   content,
+		AgentID:   agentID,
+		AgentName: agentName,
+	}
+
+	// Block until the user responds
+	response := <-e.escalationChan
+	return response, nil
+}
+
+// RespondToEscalation sends the user's response to a blocked escalation.
+func (e *Engine) RespondToEscalation(response string) {
+	e.escalationChan <- response
+}
+
+// prepareAvailableAgents returns a prompt section listing available agents for collaboration.
+func (e *Engine) prepareAvailableAgents() string {
+	agents, err := agent.LoadAll(e.homeDir)
+	if err != nil || len(agents) == 0 {
+		if len(e.delegationChain) == 0 {
+			return "\n# DELEGATION\nNo sub-agents exist yet. If the user's task needs specialized expertise, create one with `create_agent` then delegate with `delegate_task`.\nYou can also use `escalate_to_user` to ask the user a question at any time.\n"
+		}
+		return "\n# COLLABORATION\nYou can use `escalate_to_user` to ask the user a question at any time.\n"
+	}
+
+	// Filter out self from the list
+	myID := ""
+	if e.agentProfile != nil {
+		myID = e.agentProfile.ID
+	}
+
+	var b strings.Builder
+
+	if len(e.delegationChain) == 0 {
+		// Primary agent: orchestrator role
+		b.WriteString("\n# DELEGATION — IMPORTANT\n")
+		b.WriteString("You are an orchestrator. You have specialized agents available. ")
+		b.WriteString("When a task matches an agent's expertise, you MUST delegate to them using `delegate_task` instead of doing the work yourself.\n\n")
+	} else {
+		// Sub-agent: collaborative role
+		b.WriteString("\n# COLLABORATION\n")
+		b.WriteString("You can ask other agents for help using `delegate_task`, or ask the user a question using `escalate_to_user`.\n\n")
+	}
+
+	b.WriteString("## Available Agents:\n")
+	for _, a := range agents {
+		if a.ID == myID {
+			continue // don't list self
+		}
+		tools := "all tools"
+		if len(a.Tools) > 0 {
+			tools = fmt.Sprintf("%d tools", len(a.Tools))
+		}
+		b.WriteString(fmt.Sprintf("- **%s** (id: `%s`, %s): %s\n", a.Name, a.ID, tools, a.Description))
+	}
+
+	b.WriteString("\n## Rules:\n")
+	if len(e.delegationChain) == 0 {
+		b.WriteString("- If an agent's description matches the request, delegate IMMEDIATELY with `delegate_task`.\n")
+		b.WriteString("- For complex tasks, delegate to MULTIPLE agents CONCURRENTLY (multiple `delegate_task` calls in one response).\n")
+		b.WriteString("- If NO agent matches, create one with `create_agent`, then delegate.\n")
+		b.WriteString("- Only do work yourself for simple questions or trivial tasks.\n")
+	} else {
+		b.WriteString("- Delegate to another agent when you need specialized help.\n")
+		b.WriteString("- Use `escalate_to_user` when you need clarification or a decision from the user.\n")
+	}
+	b.WriteString("- Pass relevant context via the `context` parameter when delegating.\n")
+	return b.String()
 }
 
 func (e *Engine) AgentCompletion(input string, autoExecute bool) error {
@@ -935,7 +1170,10 @@ func (e *Engine) AgentCompletion(input string, autoExecute bool) error {
 	e.running = true
 	e.appendUserMessage(input)
 
-	const maxIterations = 50
+	maxIterations := 50
+	if len(e.delegationChain) > 0 {
+		maxIterations = 200 // sub-agents get more room to work on complex tasks
+	}
 
 	for i := 0; i < maxIterations; i++ {
 		if !e.running {
@@ -986,7 +1224,18 @@ func (e *Engine) AgentCompletion(input string, autoExecute bool) error {
 
 		e.appendAgentMessage(cleanResp)
 
+		// Separate delegation calls from regular tool calls
+		var delegations, regular []ToolCall
 		for _, tc := range cleanResp.ToolCalls {
+			if tc.Name == "delegate_task" {
+				delegations = append(delegations, tc)
+			} else {
+				regular = append(regular, tc)
+			}
+		}
+
+		// Execute regular tool calls sequentially
+		for _, tc := range regular {
 			if !e.running {
 				return nil
 			}
@@ -1018,6 +1267,35 @@ func (e *Engine) AgentCompletion(input string, autoExecute bool) error {
 				ToolCallID: result.ToolCallID,
 			})
 			e.agentChannel <- AgentEvent{Type: AgentEventToolResult, ToolResult: &result}
+		}
+
+		// Execute delegations in parallel
+		if len(delegations) > 0 {
+			type delegResult struct {
+				tc     ToolCall
+				result ToolResult
+			}
+			resultsCh := make(chan delegResult, len(delegations))
+
+			for _, tc := range delegations {
+				tc := tc // capture loop var
+				e.agentChannel <- AgentEvent{Type: AgentEventToolCall, ToolCall: &tc}
+				go func() {
+					result := e.toolExecutor.Execute(tc)
+					resultsCh <- delegResult{tc: tc, result: result}
+				}()
+			}
+
+			// Collect all delegation results
+			for range delegations {
+				dr := <-resultsCh
+				e.appendAgentMessage(Message{
+					Role:       "tool",
+					Content:    dr.result.Content,
+					ToolCallID: dr.result.ToolCallID,
+				})
+				e.agentChannel <- AgentEvent{Type: AgentEventToolResult, ToolResult: &dr.result}
+			}
 		}
 	}
 

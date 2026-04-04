@@ -195,6 +195,64 @@ var listSkillsSchema = json.RawMessage(`{
 	"properties": {}
 }`)
 
+var createAgentSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"name": {
+			"type": "string",
+			"description": "Human-readable name for the agent (e.g. 'DevOps Engineer', 'UI Designer')"
+		},
+		"description": {
+			"type": "string",
+			"description": "Short description of what this agent specializes in"
+		},
+		"system_prompt": {
+			"type": "string",
+			"description": "Full system prompt defining the agent's role, approach, and constraints"
+		},
+		"tools": {
+			"type": "array",
+			"items": { "type": "string" },
+			"description": "List of tool names this agent can use. Omit or empty array for all tools."
+		}
+	},
+	"required": ["name", "description", "system_prompt"]
+}`)
+
+var delegateTaskSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"agent_id": {
+			"type": "string",
+			"description": "ID of the sub-agent profile to delegate the task to"
+		},
+		"task": {
+			"type": "string",
+			"description": "Clear, complete description of the task for the sub-agent to accomplish"
+		},
+		"context": {
+			"type": "string",
+			"description": "Optional shared context: relevant findings, decisions, or constraints to pass to the sub-agent"
+		}
+	},
+	"required": ["agent_id", "task"]
+}`)
+
+var escalateToUserSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"question": {
+			"type": "string",
+			"description": "The question or clarification needed from the user"
+		},
+		"context": {
+			"type": "string",
+			"description": "Brief context about what you are working on and why you need user input"
+		}
+	},
+	"required": ["question"]
+}`)
+
 func AgentTools() []Tool {
 	return []Tool{
 		{
@@ -247,6 +305,21 @@ func AgentTools() []Tool {
 			Description: "Remove a user-created skill by name.",
 			Parameters:  removeSkillSchema,
 		},
+		{
+			Name:        "create_agent",
+			Description: "Create a new persistent sub-agent with a specialized system prompt and tool set. Use this when the user's task requires expertise that no existing sub-agent covers. The agent is saved and available for immediate delegation and future sessions.",
+			Parameters:  createAgentSchema,
+		},
+		{
+			Name:        "delegate_task",
+			Description: "Delegate a task to a specialized sub-agent. The sub-agent runs autonomously with its own system prompt and tools, and returns its result when done. Use when a task matches a specific sub-agent's expertise. You can delegate to multiple agents simultaneously.",
+			Parameters:  delegateTaskSchema,
+		},
+		{
+			Name:        "escalate_to_user",
+			Description: "Pause and ask the user a question or request a decision. Use when you encounter ambiguity, need approval for a risky action, or lack information to proceed. The user will see your question and respond.",
+			Parameters:  escalateToUserSchema,
+		},
 	}
 }
 
@@ -260,6 +333,9 @@ type ToolExecutor struct {
 	integrationTools []integration.IntegrationTool
 	skills           []skill.Manifest
 	onSkillChange    func(action, name, description string) // "create" or "remove"
+	onCreateAgent      func(name, description, systemPrompt string, tools []string) (string, error)
+	onDelegateTask     func(agentID, task, context string) (string, error)
+	onEscalateToUser   func(question, context string) (string, error)
 }
 
 func NewToolExecutor(allowSudo bool, homeDir string, workDir string, permMode config.PermissionMode) *ToolExecutor {
@@ -301,6 +377,18 @@ func (te *ToolExecutor) LoadSkills() {
 
 func (te *ToolExecutor) SetOnSkillChange(fn func(action, name, description string)) {
 	te.onSkillChange = fn
+}
+
+func (te *ToolExecutor) SetOnCreateAgent(fn func(name, description, systemPrompt string, tools []string) (string, error)) {
+	te.onCreateAgent = fn
+}
+
+func (te *ToolExecutor) SetOnDelegateTask(fn func(agentID, task, context string) (string, error)) {
+	te.onDelegateTask = fn
+}
+
+func (te *ToolExecutor) SetOnEscalateToUser(fn func(question, context string) (string, error)) {
+	te.onEscalateToUser = fn
 }
 
 func (te *ToolExecutor) findSkill(toolName string) *skill.Manifest {
@@ -389,6 +477,12 @@ func (te *ToolExecutor) Execute(tc ToolCall) ToolResult {
 		content = te.executeListSkills()
 	case "remove_skill":
 		content = te.executeRemoveSkill(tc.Arguments)
+	case "create_agent":
+		content = te.executeCreateAgent(tc.Arguments)
+	case "delegate_task":
+		content = te.executeDelegateTask(tc.Arguments)
+	case "escalate_to_user":
+		content = te.executeEscalateToUser(tc.Arguments)
 	default:
 		// Check integration tools
 		if it := te.findIntegrationTool(tc.Name); it != nil {
@@ -894,6 +988,72 @@ func (te *ToolExecutor) executeRemoveSkill(argsJSON string) string {
 	}
 
 	return fmt.Sprintf("Skill %q removed successfully.", args.Name)
+}
+
+func (te *ToolExecutor) executeCreateAgent(argsJSON string) string {
+	var args struct {
+		Name         string   `json:"name"`
+		Description  string   `json:"description"`
+		SystemPrompt string   `json:"system_prompt"`
+		Tools        []string `json:"tools"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+	if args.Name == "" || args.SystemPrompt == "" {
+		return "error: name and system_prompt are required"
+	}
+	if te.onCreateAgent == nil {
+		return "error: agent creation not available in this context"
+	}
+	result, err := te.onCreateAgent(args.Name, args.Description, args.SystemPrompt, args.Tools)
+	if err != nil {
+		return fmt.Sprintf("error creating agent: %s", err)
+	}
+	return result
+}
+
+func (te *ToolExecutor) executeDelegateTask(argsJSON string) string {
+	var args struct {
+		AgentID string `json:"agent_id"`
+		Task    string `json:"task"`
+		Context string `json:"context"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+	if args.AgentID == "" || args.Task == "" {
+		return "error: agent_id and task are required"
+	}
+	if te.onDelegateTask == nil {
+		return "error: delegation not available in this context"
+	}
+	result, err := te.onDelegateTask(args.AgentID, args.Task, args.Context)
+	if err != nil {
+		return fmt.Sprintf("error delegating to agent %q: %s", args.AgentID, err)
+	}
+	return result
+}
+
+func (te *ToolExecutor) executeEscalateToUser(argsJSON string) string {
+	var args struct {
+		Question string `json:"question"`
+		Context  string `json:"context"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+	if args.Question == "" {
+		return "error: question is required"
+	}
+	if te.onEscalateToUser == nil {
+		return "error: escalation not available in this context"
+	}
+	response, err := te.onEscalateToUser(args.Question, args.Context)
+	if err != nil {
+		return fmt.Sprintf("error escalating: %s", err)
+	}
+	return fmt.Sprintf("User responded: %s", response)
 }
 
 func formatCapturedOutput(output *run.CapturedOutput) string {

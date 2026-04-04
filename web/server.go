@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"os/exec"
 	"runtime"
 	"time"
@@ -26,10 +27,12 @@ var staticFiles embed.FS
 
 // Server is the Helm web GUI server.
 type Server struct {
-	homeDir string
-	config  *config.Config
-	engine  *ai.Engine
-	addr    string
+	homeDir      string
+	config       *config.Config
+	engine       *ai.Engine
+	addr         string
+	activeEngine *ai.Engine // currently running agent engine (for escalation responses)
+	mu           sync.Mutex
 }
 
 // NewServer creates a new web server.
@@ -61,6 +64,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/build/agent", s.corsWrap(s.handleBuildAgent))
 	mux.HandleFunc("/api/chat", s.corsWrap(s.handleChat))
 	mux.HandleFunc("/api/agent", s.corsWrap(s.handleAgent))
+	mux.HandleFunc("/api/agent/respond", s.corsWrap(s.handleAgentRespond))
 
 	// Static files
 	staticFS, err := fs.Sub(staticFiles, "static")
@@ -605,6 +609,16 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 
 	engine.StartNewSession()
 
+	// Track active engine for escalation responses
+	s.mu.Lock()
+	s.activeEngine = engine
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.activeEngine = nil
+		s.mu.Unlock()
+	}()
+
 	// Auto-execute all tools in GUI mode
 	go func() {
 		engine.AgentCompletion(req.Message, true)
@@ -614,13 +628,24 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	for event := range ch {
 		switch event.Type {
 		case ai.AgentEventThinking:
-			sseEvent(w, flusher, "thinking", event.Content)
+			payload := map[string]string{"content": event.Content}
+			if event.AgentID != "" {
+				payload["agent_id"] = event.AgentID
+				payload["agent_name"] = event.AgentName
+			}
+			data, _ := json.Marshal(payload)
+			sseEvent(w, flusher, "thinking", string(data))
 		case ai.AgentEventToolCall:
 			if event.ToolCall != nil {
-				data, _ := json.Marshal(map[string]string{
+				payload := map[string]string{
 					"name":      event.ToolCall.Name,
 					"arguments": event.ToolCall.Arguments,
-				})
+				}
+				if event.AgentID != "" {
+					payload["agent_id"] = event.AgentID
+					payload["agent_name"] = event.AgentName
+				}
+				data, _ := json.Marshal(payload)
 				sseEvent(w, flusher, "tool_call", string(data))
 			}
 		case ai.AgentEventToolResult:
@@ -629,14 +654,47 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 				if len(content) > 2000 {
 					content = content[:2000] + "..."
 				}
-				sseEvent(w, flusher, "tool_result", content)
+				payload := map[string]string{"content": content}
+				if event.AgentID != "" {
+					payload["agent_id"] = event.AgentID
+					payload["agent_name"] = event.AgentName
+				}
+				data, _ := json.Marshal(payload)
+				sseEvent(w, flusher, "tool_result", string(data))
 			}
 		case ai.AgentEventAnswer:
-			sseEvent(w, flusher, "answer", event.Content)
+			payload := map[string]string{"content": event.Content}
+			if event.AgentID != "" {
+				payload["agent_id"] = event.AgentID
+				payload["agent_name"] = event.AgentName
+			}
+			data, _ := json.Marshal(payload)
+			sseEvent(w, flusher, "answer", string(data))
 		case ai.AgentEventError:
 			if event.Error != nil {
 				sseEvent(w, flusher, "error", event.Error.Error())
 			}
+		case ai.AgentEventSubAgentStart:
+			data, _ := json.Marshal(map[string]string{
+				"agent_id":   event.AgentID,
+				"agent_name": event.AgentName,
+				"task":       event.Content,
+			})
+			sseEvent(w, flusher, "sub_agent_start", string(data))
+		case ai.AgentEventSubAgentDone:
+			data, _ := json.Marshal(map[string]string{
+				"agent_id":   event.AgentID,
+				"agent_name": event.AgentName,
+				"status":     event.Content,
+			})
+			sseEvent(w, flusher, "sub_agent_done", string(data))
+		case ai.AgentEventEscalation:
+			data, _ := json.Marshal(map[string]string{
+				"agent_id":   event.AgentID,
+				"agent_name": event.AgentName,
+				"question":   event.Content,
+			})
+			sseEvent(w, flusher, "escalation", string(data))
 		case ai.AgentEventDone:
 			sseEvent(w, flusher, "done", "")
 			return
@@ -748,6 +806,33 @@ func (s *Server) handleBuilder(w http.ResponseWriter, r *http.Request, systemPro
 	}
 
 	s.jsonResponse(w, map[string]string{"content": content})
+}
+
+func (s *Server) handleAgentRespond(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		s.jsonError(w, "method not allowed", 405)
+		return
+	}
+
+	var req struct {
+		Response string `json:"response"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonError(w, "invalid JSON", 400)
+		return
+	}
+
+	s.mu.Lock()
+	engine := s.activeEngine
+	s.mu.Unlock()
+
+	if engine == nil {
+		s.jsonError(w, "no active agent to respond to", 404)
+		return
+	}
+
+	engine.RespondToEscalation(req.Response)
+	s.jsonResponse(w, map[string]string{"status": "sent"})
 }
 
 func sseEvent(w http.ResponseWriter, flusher http.Flusher, event, data string) {

@@ -10,6 +10,9 @@ const (
 	AgentEventError
 	AgentEventDone
 	AgentEventApprovalRequired
+	AgentEventSubAgentStart
+	AgentEventSubAgentDone
+	AgentEventEscalation
 )
 
 type AgentEvent struct {
@@ -18,6 +21,8 @@ type AgentEvent struct {
 	ToolCall   *ToolCall
 	ToolResult *ToolResult
 	Error      error
+	AgentID    string // "" = primary agent, non-empty = sub-agent
+	AgentName  string // human-readable agent name for display
 }
 
 type EngineExecOutput struct {
