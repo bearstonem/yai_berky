@@ -23,7 +23,7 @@ type Profile struct {
 
 // AgentsDir returns the directory where agent profiles are stored.
 func AgentsDir(homeDir string) string {
-	return filepath.Join(homeDir, ".config", "yai", "agents")
+	return filepath.Join(homeDir, ".config", "helm", "agents")
 }
 
 func agentPath(homeDir, id string) string {

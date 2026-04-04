@@ -13,18 +13,18 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/ekkinox/yai/agent"
-	"github.com/ekkinox/yai/ai"
-	"github.com/ekkinox/yai/config"
-	"github.com/ekkinox/yai/memory"
-	"github.com/ekkinox/yai/session"
-	"github.com/ekkinox/yai/skill"
+	"github.com/bearstonem/helm/agent"
+	"github.com/bearstonem/helm/ai"
+	"github.com/bearstonem/helm/config"
+	"github.com/bearstonem/helm/memory"
+	"github.com/bearstonem/helm/session"
+	"github.com/bearstonem/helm/skill"
 )
 
 //go:embed static/*
 var staticFiles embed.FS
 
-// Server is the yai web GUI server.
+// Server is the Helm web GUI server.
 type Server struct {
 	homeDir string
 	config  *config.Config
@@ -75,7 +75,7 @@ func (s *Server) Start() error {
 	}
 
 	url := fmt.Sprintf("http://%s", listener.Addr().String())
-	fmt.Printf("yai GUI running at %s\n", url)
+	fmt.Printf("Helm GUI running at %s\n", url)
 
 	// Open browser
 	go func() {
@@ -646,7 +646,7 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 
 // --- Builders (AI-assisted creation) ---
 
-var skillBuilderPrompt = "You are a skill-builder assistant for Yai, an AI terminal tool. Your job is to help the user create a new \"skill\" — a reusable tool that the Yai agent can invoke.\n\n" +
+var skillBuilderPrompt = "You are a skill-builder assistant for Helm, an AI terminal tool. Your job is to help the user create a new \"skill\" — a reusable tool that the Helm agent can invoke.\n\n" +
 	"A skill consists of:\n" +
 	"- **name**: short snake_case identifier (e.g. \"fetch_github_issues\")\n" +
 	"- **description**: what the tool does (shown to the AI agent)\n" +
@@ -666,7 +666,7 @@ var skillBuilderPrompt = "You are a skill-builder assistant for Yai, an AI termi
 	"- Keep descriptions concise but informative — they're shown to the AI agent.\n" +
 	"- Be conversational and helpful. If the user is vague, ask questions."
 
-var agentBuilderPrompt = "You are an agent-builder assistant for Yai, an AI terminal tool. Your job is to help the user create a custom \"agent profile\" — a preconfigured AI persona with a specific system prompt and tool set.\n\n" +
+var agentBuilderPrompt = "You are an agent-builder assistant for Helm, an AI terminal tool. Your job is to help the user create a custom \"agent profile\" — a preconfigured AI persona with a specific system prompt and tool set.\n\n" +
 	"An agent profile consists of:\n" +
 	"- **name**: human-readable name (e.g. \"Code Reviewer\", \"DevOps Bot\")\n" +
 	"- **description**: short description of what this agent specializes in\n" +
@@ -721,15 +721,6 @@ func (s *Server) handleBuilder(w http.ResponseWriter, r *http.Request, systemPro
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		s.jsonError(w, "streaming not supported", 500)
-		return
-	}
-
 	// Build messages with system prompt
 	messages := []ai.Message{
 		{Role: "system", Content: systemPrompt},
@@ -738,41 +729,35 @@ func (s *Server) handleBuilder(w http.ResponseWriter, r *http.Request, systemPro
 		messages = append(messages, ai.Message{Role: m.Role, Content: m.Content})
 	}
 
-	// Create a fresh engine for this request
+	// Non-streaming completion — avoids think tag splitting issues
 	engine, err := ai.NewEngine(ai.ChatEngineMode, s.config)
 	if err != nil {
-		sseEvent(w, flusher, "error", err.Error())
+		s.jsonError(w, err.Error(), 500)
 		return
 	}
 
-	// Use the engine's provider directly for a streaming completion
-	ch := make(chan ai.StreamChunk)
-	go func() {
-		engine.GetProvider().StreamComplete(r.Context(), ai.CompletionRequest{
-			Model:       engine.GetModel(),
-			MaxTokens:   s.config.GetAiConfig().GetMaxTokens(),
-			Temperature: s.config.GetAiConfig().GetTemperature(),
-			Messages:    messages,
-		}, ch)
-	}()
-
-	for chunk := range ch {
-		if chunk.Err != nil {
-			sseEvent(w, flusher, "error", chunk.Err.Error())
-			return
-		}
-		if chunk.Content != "" {
-			sseEvent(w, flusher, "content", chunk.Content)
-		}
-		if chunk.Done {
-			sseEvent(w, flusher, "done", "")
-			return
-		}
+	content, err := engine.GetProvider().Complete(r.Context(), ai.CompletionRequest{
+		Model:       engine.GetModel(),
+		MaxTokens:   s.config.GetAiConfig().GetMaxTokens(),
+		Temperature: s.config.GetAiConfig().GetTemperature(),
+		Messages:    messages,
+	})
+	if err != nil {
+		s.jsonError(w, err.Error(), 500)
+		return
 	}
+
+	s.jsonResponse(w, map[string]string{"content": content})
 }
 
 func sseEvent(w http.ResponseWriter, flusher http.Flusher, event, data string) {
-	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
+	fmt.Fprintf(w, "event: %s\n", event)
+	// SSE requires multi-line data to have each line prefixed with "data: "
+	lines := strings.Split(data, "\n")
+	for _, line := range lines {
+		fmt.Fprintf(w, "data: %s\n", line)
+	}
+	fmt.Fprintf(w, "\n")
 	flusher.Flush()
 }
 

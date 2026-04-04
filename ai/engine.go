@@ -8,14 +8,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ekkinox/yai/agent"
-	"github.com/ekkinox/yai/config"
-	"github.com/ekkinox/yai/hook"
-	"github.com/ekkinox/yai/integration"
-	"github.com/ekkinox/yai/memory"
-	"github.com/ekkinox/yai/run"
-	"github.com/ekkinox/yai/session"
-	"github.com/ekkinox/yai/system"
+	"github.com/bearstonem/helm/agent"
+	"github.com/bearstonem/helm/config"
+	"github.com/bearstonem/helm/hook"
+	"github.com/bearstonem/helm/integration"
+	"github.com/bearstonem/helm/memory"
+	"github.com/bearstonem/helm/run"
+	"github.com/bearstonem/helm/session"
+	"github.com/bearstonem/helm/system"
 )
 
 const noexec = "[noexec]"
@@ -795,7 +795,7 @@ func (e *Engine) prepareSystemPrompt() string {
 }
 
 func (e *Engine) prepareSystemPromptExecPart() string {
-	prompt := "Your are Yai, a powerful terminal assistant generating a JSON containing a command line for my input.\n" +
+	prompt := "You are Helm, a powerful terminal assistant generating a JSON containing a command line for my input.\n" +
 		"You will always reply using the following json structure: {\"cmd\":\"the command\", \"exp\": \"some explanation\", \"exec\": true}.\n" +
 		"Your answer will always only contain the json structure, never add any advice or supplementary detail or information, even if I asked the same question before.\n" +
 		"The field cmd will contain a single line command (don't use new lines, use separators like && and ; instead).\n" +
@@ -814,28 +814,28 @@ func (e *Engine) prepareSystemPromptExecPart() string {
 	prompt += "\n" +
 		"Examples:\n" +
 		"Me: list all files in my home dir\n" +
-		"Yai: {\"cmd\":\"ls ~\", \"exp\": \"list all files in your home dir\", \"exec\": true}\n" +
+		"Helm: {\"cmd\":\"ls ~\", \"exp\": \"list all files in your home dir\", \"exec\": true}\n" +
 		"Me: list all pods of all namespaces\n" +
-		"Yai: {\"cmd\":\"kubectl get pods --all-namespaces\", \"exp\": \"list pods form all k8s namespaces\", \"exec\": true}\n" +
+		"Helm: {\"cmd\":\"kubectl get pods --all-namespaces\", \"exp\": \"list pods form all k8s namespaces\", \"exec\": true}\n" +
 		"Me: how are you ?\n" +
-		"Yai: {\"cmd\":\"\", \"exp\": \"I'm good thanks but I cannot generate a command for this. Use the chat mode to discuss.\", \"exec\": false}"
+		"Helm: {\"cmd\":\"\", \"exp\": \"I'm good thanks but I cannot generate a command for this. Use the chat mode to discuss.\", \"exec\": false}"
 
 	return prompt
 }
 
 func (e *Engine) prepareSystemPromptChatPart() string {
-	return "You are Yai a powerful terminal assistant created by github.com/ekkinox.\n" +
+	return "You are Helm a powerful terminal assistant created by github.com/bearstonem.\n" +
 		"You will answer in the most helpful possible way.\n" +
 		"Always format your answer in markdown format.\n\n" +
 		"For example:\n" +
 		"Me: What is 2+2 ?\n" +
-		"Yai: The answer for `2+2` is `4`\n" +
+		"Helm: The answer for `2+2` is `4`\n" +
 		"Me: +2 again ?\n" +
-		"Yai: The answer is `6`\n"
+		"Helm: The answer is `6`\n"
 }
 
 func (e *Engine) prepareSystemPromptAgentPart() string {
-	prompt := "You are Yai, an autonomous terminal agent. You help the user accomplish software engineering and system administration tasks.\n\n"
+	prompt := "You are Helm, an autonomous terminal agent. You help the user accomplish software engineering and system administration tasks.\n\n"
 
 	if e.remoteHost != "" {
 		prompt += fmt.Sprintf("IMPORTANT: You are operating on a REMOTE host via SSH (%s).\n", e.remoteHost)
@@ -1102,10 +1102,10 @@ func (e *Engine) prepareSystemPromptContextPart() string {
 		part += fmt.Sprintf("Also, %s.", e.config.GetUserConfig().GetPreferences())
 	}
 
-	// Inject instruction files (YAI.md) discovered from the workspace.
+	// Inject instruction files (HELM.md) discovered from the workspace.
 	instructions := system.DiscoverInstructions(workDir)
 	if instructions != "" {
-		part += "\n\n# Project Instructions (from YAI.md)\n\n" + instructions
+		part += "\n\n# Project Instructions (from HELM.md)\n\n" + instructions
 	}
 
 	return part

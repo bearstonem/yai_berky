@@ -1,4 +1,4 @@
-// yai GUI - Frontend Application
+// Helm GUI - Frontend Application
 
 const API = '';  // same origin
 
@@ -60,18 +60,30 @@ function sendChat() {
   chatStreaming = true;
 
   const area = document.getElementById('chat-messages');
-  const streamer = createThinkStreamer(area);
+  // Show a streaming placeholder that accumulates raw text
+  const placeholder = document.createElement('div');
+  placeholder.className = 'msg msg-assistant msg-streaming';
+  placeholder.textContent = '';
+  area.appendChild(placeholder);
+  let fullText = '';
 
   fetchSSE('/api/chat', { message }, {
     content: (data) => {
-      streamer.push(data);
+      fullText += data;
+      // Show raw text while streaming (fast feedback)
+      placeholder.textContent = stripThinkTagsSimple(fullText);
+      area.scrollTop = area.scrollHeight;
     },
     done: () => {
-      streamer.finish();
+      // Replace placeholder with properly rendered content
+      placeholder.remove();
+      renderFormattedResponse(area, fullText);
       chatStreaming = false;
+      area.scrollTop = area.scrollHeight;
     },
     error: (data) => {
-      streamer.finish();
+      placeholder.remove();
+      if (fullText) renderFormattedResponse(area, fullText);
       addMessage('chat-messages', 'Error: ' + data, 'error');
       chatStreaming = false;
     }
@@ -100,19 +112,7 @@ function sendAgent() {
 
   fetchSSE('/api/agent', body, {
     thinking: (data) => {
-      // Render think-tagged content in a collapsible block, rest as thinking bubble
-      const clean = data.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-      const thinkMatch = data.match(/<think>([\s\S]*?)<\/think>/);
-      if (thinkMatch && thinkMatch[1].trim()) {
-        const el = document.createElement('details');
-        el.className = 'msg msg-think-block';
-        el.innerHTML = '<summary class="think-summary">Thinking...</summary>' +
-          '<div class="think-content">' + escapeHtml(thinkMatch[1].trim()) + '</div>';
-        area.appendChild(el);
-      }
-      if (clean) {
-        addMessage('agent-messages', clean, 'thinking');
-      }
+      renderFormattedResponse(area, data, 'thinking');
       area.scrollTop = area.scrollHeight;
     },
     tool_call: (data) => {
@@ -136,7 +136,7 @@ function sendAgent() {
       area.scrollTop = area.scrollHeight;
     },
     answer: (data) => {
-      addMessage('agent-messages', data, 'assistant');
+      renderFormattedResponse(area, data);
       area.scrollTop = area.scrollHeight;
     },
     error: (data) => {
@@ -166,11 +166,19 @@ function fetchSSE(url, body, handlers) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let doneFired = false;
+
+    function fireDone() {
+      if (!doneFired) {
+        doneFired = true;
+        if (handlers.done) handlers.done();
+      }
+    }
 
     function read() {
       reader.read().then(({ done, value }) => {
         if (done) {
-          if (handlers.done) handlers.done();
+          fireDone();
           return;
         }
 
@@ -179,15 +187,23 @@ function fetchSSE(url, body, handlers) {
         buffer = lines.pop(); // keep incomplete line
 
         let currentEvent = '';
+        let dataLines = [];
         for (const line of lines) {
           if (line.startsWith('event: ')) {
             currentEvent = line.slice(7);
+            dataLines = [];
           } else if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (currentEvent && handlers[currentEvent]) {
+            dataLines.push(line.slice(6));
+          } else if (line === '' && currentEvent) {
+            // Empty line = end of event
+            const data = dataLines.join('\n');
+            if (currentEvent === 'done') {
+              fireDone();
+            } else if (handlers[currentEvent]) {
               handlers[currentEvent](data);
             }
             currentEvent = '';
+            dataLines = [];
           }
         }
 
@@ -246,7 +262,7 @@ function filterSkills() {
     filtered.length === allSkills.length ? '' : filtered.length + ' of ' + allSkills.length;
 
   if (allSkills.length === 0) {
-    container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x1F9E0;</div>' +
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x1F9E0;</div>#x1F527;</div>' +
       '<p>No skills yet. Create one or ask the agent to build a skill.</p></div>';
     return;
   }
@@ -394,7 +410,7 @@ function filterSessions() {
     filtered.length === allSessions.length ? '' : filtered.length + ' of ' + allSessions.length;
 
   if (allSessions.length === 0) {
-    container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x1F4C1;</div>' +
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x1F4C1;</div>#x1F4DC;</div>' +
       '<p>No sessions yet. Start a conversation to create one.</p></div>';
     return;
   }
@@ -467,7 +483,7 @@ async function loadAgentsList() {
   const container = document.getElementById('agents-list');
 
   if (agents.length === 0) {
-    container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x1F47E;</div>' +
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x1F47E;#x1F6A2;</div>' +
       '<p>No custom agents yet. Create one to get started.</p></div>';
     return;
   }
@@ -479,7 +495,7 @@ async function loadAgentsList() {
     return `
     <div class="card">
       <div class="card-title">
-        <span>&#x1F47E;</span>
+        <span>&#x1F47E;#x1F6A2;</span>
         <span>${escapeHtml(a.name)}</span>
         ${a.model ? '<span class="badge badge-lang">' + escapeHtml(a.model) + '</span>' : ''}
       </div>
@@ -864,6 +880,84 @@ function formatDate(dateStr) {
   return d.toLocaleDateString();
 }
 
+// --- Formatted response rendering ---
+
+// Render a complete response, splitting think blocks from content.
+// msgClass defaults to 'assistant' for normal messages, 'thinking' for agent thinking.
+function renderFormattedResponse(container, text, msgClass) {
+  msgClass = msgClass || 'assistant';
+
+  // Handle case where <think> has no </think> — treat everything after
+  // the first double-newline (or end) as the actual content
+  text = fixUnclosedThinkTags(text);
+
+  // Split on <think>...</think> blocks
+  const parts = text.split(/(<think>[\s\S]*?<\/think>)/g);
+
+  for (const part of parts) {
+    if (!part.trim()) continue;
+
+    const thinkMatch = part.match(/^<think>([\s\S]*)<\/think>$/);
+    if (thinkMatch) {
+      const el = document.createElement('details');
+      el.className = 'msg msg-think-block';
+      el.innerHTML = '<summary class="think-summary">Thinking...</summary>' +
+        '<div class="think-content">' + escapeHtml(thinkMatch[1].trim()) + '</div>';
+      container.appendChild(el);
+    } else {
+      const el = document.createElement('div');
+      el.className = 'msg msg-' + msgClass;
+      el.innerHTML = renderFormattedText(part.trim());
+      container.appendChild(el);
+    }
+  }
+}
+
+// Fix unclosed <think> tags by inserting </think> at the first double-newline
+// or at the end if no double-newline is found.
+function fixUnclosedThinkTags(text) {
+  let result = text;
+  let searchFrom = 0;
+
+  while (true) {
+    const openIdx = result.indexOf('<think>', searchFrom);
+    if (openIdx === -1) break;
+
+    const afterOpen = openIdx + 7;
+    const closeIdx = result.indexOf('</think>', afterOpen);
+
+    if (closeIdx === -1) {
+      // No closing tag — find the boundary
+      const dblNewline = result.indexOf('\n\n', afterOpen);
+      if (dblNewline !== -1) {
+        // Insert </think> before the double newline
+        result = result.substring(0, dblNewline) + '</think>' + result.substring(dblNewline);
+      } else {
+        // No double newline — close at end
+        result = result + '</think>';
+      }
+    }
+
+    searchFrom = openIdx + 1;
+    // Safety: prevent infinite loop
+    if (searchFrom > result.length) break;
+  }
+
+  return result;
+}
+
+// Strip think tags for display during streaming (simple version, no HTML)
+function stripThinkTagsSimple(text) {
+  // Remove complete think blocks
+  text = text.replace(/<think>[\s\S]*?<\/think>/g, '');
+  // Remove unclosed think tag and everything after it
+  const openIdx = text.indexOf('<think>');
+  if (openIdx !== -1) {
+    text = text.substring(0, openIdx);
+  }
+  return text.trim();
+}
+
 // --- Think-aware streamer ---
 // Streams content into a container, rendering <think> blocks into collapsible
 // "thinking" elements and normal text into assistant message bubbles.
@@ -1086,14 +1180,13 @@ function closeBuilder() {
 }
 
 // "Finish & Save" — sends a finalize message, then auto-saves once we get the definition
-function finishBuilder() {
+async function finishBuilder() {
   if (builderStreaming) return;
 
   const finishMsg = builderType === 'skill'
     ? 'Please finalize the skill now. Output the complete skill_definition JSON block with all fields (name, description, language, script, parameters) so it can be saved.'
     : 'Please finalize the agent now. Output the complete agent_definition JSON block with all fields (name, description, system_prompt, tools, model) so it can be saved.';
 
-  // Inject as user message
   builderMessages.push({ role: 'user', content: finishMsg });
   addMessage('builder-messages', 'Finishing and saving...', 'user');
   builderStreaming = true;
@@ -1101,43 +1194,53 @@ function finishBuilder() {
   document.getElementById('builder-finish-btn').disabled = true;
 
   const area = document.getElementById('builder-messages');
-  const streamer = createThinkStreamer(area);
+  const loadingEl = document.createElement('div');
+  loadingEl.className = 'msg msg-assistant';
+  loadingEl.innerHTML = '<span class="spinner"></span> Generating final definition...';
+  area.appendChild(loadingEl);
+  area.scrollTop = area.scrollHeight;
+
   const endpoint = builderType === 'skill' ? '/api/build/skill' : '/api/build/agent';
 
-  fetchSSE(endpoint, { messages: builderMessages }, {
-    content: (data) => {
-      streamer.push(data);
-    },
-    done: async () => {
-      streamer.finish();
-      builderStreaming = false;
-      document.getElementById('builder-send-btn').disabled = false;
-      document.getElementById('builder-finish-btn').disabled = false;
-      builderMessages.push({ role: 'assistant', content: streamer.fullText() });
+  try {
+    const res = await fetch(API + endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: builderMessages })
+    });
 
-      const def = extractDefinition(streamer.fullText(), builderType);
+    loadingEl.remove();
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Request failed' }));
+      addMessage('builder-messages', 'Error: ' + (err.error || res.statusText), 'error');
+    } else {
+      const data = await res.json();
+      const content = data.content || '';
+      builderMessages.push({ role: 'assistant', content });
+      renderBuilderResponse(area, content);
+
+      const def = extractDefinition(content, builderType);
       if (def) {
         builderResult = def;
-        // Auto-save
         await saveBuilderResult();
       } else {
-        // Show the save bar so user can retry or edit
         addMessage('builder-messages',
-          'Could not auto-extract the definition. You can try again or use "Edit first" to save manually.',
+          'Could not auto-extract the definition. You can try "Edit first" to save manually.',
           'error');
         document.getElementById('builder-save-bar').classList.remove('hidden');
         document.getElementById('builder-save-label').textContent = 'Auto-save failed — try manually:';
       }
-      area.scrollTop = area.scrollHeight;
-    },
-    error: (data) => {
-      streamer.finish();
-      addMessage('builder-messages', 'Error: ' + data, 'error');
-      builderStreaming = false;
-      document.getElementById('builder-send-btn').disabled = false;
-      document.getElementById('builder-finish-btn').disabled = false;
     }
-  });
+  } catch(e) {
+    loadingEl.remove();
+    addMessage('builder-messages', 'Error: ' + e.message, 'error');
+  }
+
+  builderStreaming = false;
+  document.getElementById('builder-send-btn').disabled = false;
+  document.getElementById('builder-finish-btn').disabled = false;
+  area.scrollTop = area.scrollHeight;
 }
 
 function handleBuilderKey(e) {
@@ -1147,7 +1250,7 @@ function handleBuilderKey(e) {
   }
 }
 
-function sendBuilderMessage() {
+async function sendBuilderMessage() {
   const input = document.getElementById('builder-input');
   const message = input.value.trim();
   if (!message || builderStreaming) return;
@@ -1158,39 +1261,61 @@ function sendBuilderMessage() {
   autoResize(input);
   builderStreaming = true;
   document.getElementById('builder-send-btn').disabled = true;
+  document.getElementById('builder-finish-btn').disabled = true;
 
   const area = document.getElementById('builder-messages');
-  const streamer = createThinkStreamer(area);
+  // Show a loading indicator
+  const loadingEl = document.createElement('div');
+  loadingEl.className = 'msg msg-assistant';
+  loadingEl.innerHTML = '<span class="spinner"></span> Thinking...';
+  area.appendChild(loadingEl);
+  area.scrollTop = area.scrollHeight;
 
   const endpoint = builderType === 'skill' ? '/api/build/skill' : '/api/build/agent';
 
-  fetchSSE(endpoint, { messages: builderMessages }, {
-    content: (data) => {
-      streamer.push(data);
-    },
-    done: () => {
-      streamer.finish();
-      builderStreaming = false;
-      document.getElementById('builder-send-btn').disabled = false;
-      builderMessages.push({ role: 'assistant', content: streamer.fullText() });
+  try {
+    const res = await fetch(API + endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: builderMessages })
+    });
 
-      // Check if the response contains a definition block
-      const def = extractDefinition(streamer.fullText(), builderType);
+    loadingEl.remove();
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Request failed' }));
+      addMessage('builder-messages', 'Error: ' + (err.error || res.statusText), 'error');
+    } else {
+      const data = await res.json();
+      const content = data.content || '';
+      builderMessages.push({ role: 'assistant', content });
+
+      // Render the response with think blocks and code formatting
+      renderBuilderResponse(area, content);
+
+      // Check for extractable definition
+      const def = extractDefinition(content, builderType);
       if (def) {
         builderResult = def;
         document.getElementById('builder-save-label').textContent =
           'Definition ready — "' + (def.name || 'unnamed') + '"';
         document.getElementById('builder-save-bar').classList.remove('hidden');
-        area.scrollTop = area.scrollHeight;
       }
-    },
-    error: (data) => {
-      streamer.finish();
-      addMessage('builder-messages', 'Error: ' + data, 'error');
-      builderStreaming = false;
-      document.getElementById('builder-send-btn').disabled = false;
     }
-  });
+  } catch(e) {
+    loadingEl.remove();
+    addMessage('builder-messages', 'Error: ' + e.message, 'error');
+  }
+
+  builderStreaming = false;
+  document.getElementById('builder-send-btn').disabled = false;
+  document.getElementById('builder-finish-btn').disabled = false;
+  area.scrollTop = area.scrollHeight;
+}
+
+// Alias for builder — uses shared renderFormattedResponse
+function renderBuilderResponse(container, text) {
+  renderFormattedResponse(container, text);
 }
 
 function extractDefinition(text, type) {

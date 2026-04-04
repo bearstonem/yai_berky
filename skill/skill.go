@@ -24,9 +24,9 @@ func (m *Manifest) ToolName() string {
 	return "skill_" + sanitizeName(m.Name)
 }
 
-// SkillsDir returns the default skills directory (~/.config/yai/skills/).
+// SkillsDir returns the default skills directory (~/.config/helm/skills/).
 func SkillsDir(homeDir string) string {
-	return filepath.Join(homeDir, ".config", "yai", "skills")
+	return filepath.Join(homeDir, ".config", "helm", "skills")
 }
 
 // LoadAll reads all skill manifests from the skills directory.
