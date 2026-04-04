@@ -7,13 +7,13 @@ import (
 )
 
 const (
-	InstructionFileName = "YAI.md"
+	InstructionFileName = "HELM.md"
 	maxPerFile          = 4096  // 4KB per file
 	maxTotal            = 12288 // 12KB total
 )
 
 // DiscoverInstructions walks up the directory tree from startDir to the
-// filesystem root, collecting YAI.md files. Files closer to the root are
+// filesystem root, collecting HELM.md files. Files closer to the root are
 // returned first (broadest context first), so project-level instructions
 // appear before subdirectory-specific ones.
 func DiscoverInstructions(startDir string) string {

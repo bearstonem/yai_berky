@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ekkinox/yai/config"
+	"github.com/bearstonem/helm/config"
 )
 
 // ToolDef mirrors ai.Tool without importing the ai package (to avoid cycles).

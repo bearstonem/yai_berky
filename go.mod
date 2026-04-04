@@ -1,4 +1,4 @@
-module github.com/ekkinox/yai
+module github.com/bearstonem/helm
 
 go 1.26.0
 

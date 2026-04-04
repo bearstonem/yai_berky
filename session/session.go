@@ -46,7 +46,7 @@ type SessionInfo struct {
 }
 
 func sessionsDir(homeDir string) string {
-	return filepath.Join(homeDir, ".config", "yai", "sessions")
+	return filepath.Join(homeDir, ".config", "helm", "sessions")
 }
 
 func sessionPath(homeDir, id string) string {

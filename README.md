@@ -1,19 +1,19 @@
-# Yai - AI powered terminal assistant
+# Helm - AI Agent Platform
 
 > Unleash the power of artificial intelligence to streamline your command line experience.
 
 ![Intro](docs/_assets/intro.gif)
 
-## What is Yai?
+## What is Helm?
 
-`Yai` (your AI) is an assistant for your terminal, using AI to build and run commands for you. You just need to describe them in your everyday language, it will take care of the rest.
+`Helm` is an AI agent platform for your terminal. It builds and runs commands, manages autonomous agents, creates reusable skills, and remembers across sessions. Describe what you need in everyday language, and it takes care of the rest.
 
-You have any questions on random topics in mind? You can also ask `Yai`, and get the power of AI without leaving `/home`.
+You have any questions on random topics in mind? You can also ask `Helm`, and get the power of AI without leaving `/home`.
 
 **Three modes** (press `tab` to cycle):
-- **Exec** `🚀` -- describe what you want, get a single command, confirm with `y`
-- **Chat** `💬` -- ask questions, get markdown-rendered answers
-- **Agent** `🤖` -- give a task, the AI autonomously runs commands, reads/writes files, creates tools, and iterates until it's done
+- **Exec** `⚓` -- describe what you want, get a single command, confirm with `y`
+- **Chat** `🧭` -- ask questions, get markdown-rendered answers
+- **Agent** `⎈` -- give a task, the AI autonomously runs commands, reads/writes files, creates tools, and iterates until it's done
 
 It is already aware of your:
 - operating system & distribution
@@ -26,7 +26,7 @@ And you can also give any supplementary preferences to fine tune your experience
 
 ### Multi-Provider Support
 
-Yai works with a wide range of cloud AI providers and local LLM runtimes through a unified OpenAI-compatible interface:
+Helm works with a wide range of cloud AI providers and local LLM runtimes through a unified OpenAI-compatible interface:
 
 | Provider | Type | Default Model |
 |---|---|---|
@@ -45,7 +45,7 @@ Providers that don't support OpenAI-style function calling (Ollama, llama.cpp, L
 
 ### Agent Mode
 
-Agent mode lets the AI autonomously complete multi-step tasks. Press `tab` to cycle to the `🤖 agent` prompt, describe your task, and the AI will:
+Agent mode lets the AI autonomously complete multi-step tasks. Press `tab` to cycle to the `⎈ agent` prompt, describe your task, and the AI will:
 
 1. Plan what needs to be done
 2. Run shell commands, read/write/edit files, search the codebase
@@ -77,13 +77,13 @@ The agent can create its own reusable tools called **skills**. Ask the agent to 
 2. Define the tool schema (name, description, parameters)
 3. Save it as a persistent skill available in all future sessions
 
-Skills are stored in `~/.config/yai/skills/` as a manifest + script pair. On startup, Yai loads all skills and displays them alongside the built-in tools.
+Skills are stored in `~/.config/helm/skills/` as a manifest + script pair. On startup, Helm loads all skills and displays them alongside the built-in tools.
 
 Manage skills with the `/skill` slash command or let the agent handle it via `create_skill` / `remove_skill`.
 
 ### Vector Memory
 
-Yai includes a local vector memory system powered by **SQLite + sqlite-vec** that gives the AI cross-session context recall.
+Helm includes a local vector memory system powered by **SQLite + sqlite-vec** that gives the AI cross-session context recall.
 
 **What gets indexed:**
 - Conversation messages (user and assistant)
@@ -99,7 +99,7 @@ Check memory stats with `/memory`.
 
 ### Tool Integrations
 
-Yai supports external tool integrations that extend the agent's capabilities:
+Helm supports external tool integrations that extend the agent's capabilities:
 
 - **ComfyUI** -- Generate images via a local or remote ComfyUI server
 - **Webhook** -- Call arbitrary HTTP endpoints as agent tools
@@ -118,23 +118,23 @@ The input field supports multiline text:
 
 Use `--pipe` for headless, non-interactive operation. This bypasses the TUI entirely -- input comes from command-line args, output goes to stdout as plain text. Agent mode auto-executes all tools without confirmation.
 
-This makes yai usable as a tool by other AI agents, scripts, and CI pipelines.
+This makes helm usable as a tool by other AI agents, scripts, and CI pipelines.
 
 ```shell
 # Agent mode -- auto-executes tools, prints final answer to stdout
-yai --pipe -a "find all TODO comments in this project"
+helm --pipe -a "find all TODO comments in this project"
 
 # Chat mode -- plain text response to stdout
-yai --pipe -c "explain what a goroutine is"
+helm --pipe -c "explain what a goroutine is"
 
 # Exec mode -- prints just the command
-yai --pipe -e "list docker containers"
+helm --pipe -e "list docker containers"
 
 # Pipe stdin
-echo "refactor this function" | yai --pipe -a
+echo "refactor this function" | helm --pipe -a
 
 # Use in scripts
-COMMAND=$(yai --pipe -e "compress all png files in current dir")
+COMMAND=$(helm --pipe -e "compress all png files in current dir")
 echo "Would run: $COMMAND"
 ```
 
@@ -142,19 +142,19 @@ Diagnostic output (thinking, tool calls, results) goes to stderr, so stdout cont
 
 ### Remote Mode
 
-Use `--remote` to run agent mode on a remote machine via SSH. Yai stays on your local machine -- all commands, file reads, and writes tunnel through SSH automatically. No install needed on the remote host.
+Use `--remote` to run agent mode on a remote machine via SSH. Helm stays on your local machine -- all commands, file reads, and writes tunnel through SSH automatically. No install needed on the remote host.
 
 ```shell
 # One-shot task on a remote host
-yai --remote user@192.168.1.81 check disk usage
+helm --remote user@192.168.1.81 check disk usage
 
 # Interactive REPL on a remote host
-yai --remote user@192.168.1.81
+helm --remote user@192.168.1.81
 ```
 
-The `--remote` flag implies agent mode. On startup, Yai probes the remote system (OS, shell, home directory) and includes this context in the prompt so the AI generates correct commands for the target.
+The `--remote` flag implies agent mode. On startup, Helm probes the remote system (OS, shell, home directory) and includes this context in the prompt so the AI generates correct commands for the target.
 
-**Requirements:** Key-based SSH authentication must be configured for the target host (Yai uses `BatchMode=yes` and will not prompt for passwords).
+**Requirements:** Key-based SSH authentication must be configured for the target host (Helm uses `BatchMode=yes` and will not prompt for passwords).
 
 ### Permission Modes
 
@@ -168,7 +168,7 @@ Control what the agent is allowed to do with `USER_PERMISSION_MODE`:
 
 ### Sudo Support
 
-By default, Yai will not generate commands that use `sudo`. To enable elevated-privilege commands, set `USER_ALLOW_SUDO` to `true` in your config (`ctrl+s` inside Yai).
+By default, Helm will not generate commands that use `sudo`. To enable elevated-privilege commands, set `USER_ALLOW_SUDO` to `true` in your config (`ctrl+s` inside Helm).
 
 When enabled:
 - The AI will use `sudo` when a task requires root access (installing packages, managing services, editing system files, etc.)
@@ -182,9 +182,9 @@ When enabled:
 Clone the repo and build. Requires [Go](https://go.dev/dl/) 1.21+ and a C compiler (CGO is required for sqlite-vec).
 
 ```shell
-git clone https://github.com/ekkinox/yai.git && cd yai
-go build -o yai .
-mv yai ~/.local/bin/   # or anywhere on your PATH
+git clone https://github.com/bearstonem/helm.git && cd helm
+go build -o helm .
+mv helm ~/.local/bin/   # or anywhere on your PATH
 ```
 
 Or use the install script:
@@ -199,29 +199,29 @@ This builds the binary, installs it to `~/.local/bin`, and adds it to your PATH 
 INSTALL_DIR=/usr/local/bin sudo ./install-local.sh
 ```
 
-At first run, it will ask you to choose a provider and enter your API key (if needed), then create the configuration file in `~/.config/yai.json`.
+At first run, it will ask you to choose a provider and enter your API key (if needed), then create the configuration file in `~/.config/helm.json`.
 
 ### Usage
 
 ```shell
 # Interactive REPL (default)
-yai
+helm
 
 # One-shot exec mode
-yai list all docker containers
+helm list all docker containers
 
 # One-shot chat mode
-yai -c explain what a goroutine is
+helm -c explain what a goroutine is
 
 # One-shot agent mode
-yai -a refactor the logging in this project
+helm -a refactor the logging in this project
 
 # Pipe mode (no TUI, plain text I/O, agent auto-executes)
-yai --pipe -a "create a hello world web server"
-yai --pipe -c "what is a mutex" > answer.txt
+helm --pipe -a "create a hello world web server"
+helm --pipe -c "what is a mutex" > answer.txt
 
 # Agent on a remote host
-yai --remote user@host deploy the latest build
+helm --remote user@host deploy the latest build
 ```
 
 ## Keyboard Shortcuts
@@ -262,7 +262,7 @@ yai --remote user@host deploy the latest build
 
 ## Configuration
 
-The configuration file lives at `~/.config/yai.json`. You can edit it directly or press `ctrl+s` inside Yai.
+The configuration file lives at `~/.config/helm.json`. You can edit it directly or press `ctrl+s` inside Helm.
 
 ```json
 {
@@ -300,16 +300,16 @@ The configuration file lives at `~/.config/yai.json`. You can edit it directly o
 
 ## Building
 
-Yai uses CGO for the sqlite-vec vector memory system. You'll need:
+Helm uses CGO for the sqlite-vec vector memory system. You'll need:
 
 - Go 1.21+
 - A C compiler (`gcc` or `clang`)
 - SQLite development headers: `sudo apt-get install libsqlite3-dev` (Debian/Ubuntu)
 
 ```shell
-CGO_ENABLED=1 go build -o yai .
+CGO_ENABLED=1 go build -o helm .
 ```
 
 ## Thanks
 
-Thanks to [@K-arch27](https://github.com/K-arch27) for the `Yai` name suggestion.
+Thanks to [@K-arch27](https://github.com/K-arch27) for the `Helm` name suggestion.

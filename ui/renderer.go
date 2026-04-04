@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ekkinox/yai/config"
-	"github.com/ekkinox/yai/skill"
+	"github.com/bearstonem/helm/config"
+	"github.com/bearstonem/helm/skill"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
@@ -225,7 +225,7 @@ func (r *Renderer) RenderRemoteInfo(host string, hostname string, os string) str
 func (r *Renderer) RenderHelpMessage() string {
 	help := "**Help**\n"
 	help += "- `↑`/`↓` : navigate in history\n"
-	help += "- `tab`   : switch between `🚀 exec`, `💬 chat`, and `🤖 agent` prompt modes\n"
+	help += "- `tab`   : switch between `⚓ exec`, `🧭 chat`, and `⎈ agent` prompt modes\n"
 	help += "- `ctrl+h`: show help\n"
 	help += "- `ctrl+s`: edit settings\n"
 	help += "- `ctrl+r`: clear terminal and reset discussion history\n"

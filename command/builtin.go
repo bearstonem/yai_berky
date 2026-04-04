@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ekkinox/yai/config"
-	"github.com/ekkinox/yai/skill"
+	"github.com/bearstonem/helm/config"
+	"github.com/bearstonem/helm/skill"
 )
 
 // RegisterBuiltins adds all built-in slash commands to the registry.

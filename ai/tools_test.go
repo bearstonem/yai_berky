@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ekkinox/yai/config"
-	"github.com/ekkinox/yai/hook"
-	"github.com/ekkinox/yai/run"
+	"github.com/bearstonem/helm/config"
+	"github.com/bearstonem/helm/hook"
+	"github.com/bearstonem/helm/run"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

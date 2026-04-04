@@ -5,10 +5,10 @@ import (
 	"log"
 	"os"
 
-	"github.com/ekkinox/yai/ai"
-	"github.com/ekkinox/yai/config"
-	"github.com/ekkinox/yai/ui"
-	"github.com/ekkinox/yai/web"
+	"github.com/bearstonem/helm/ai"
+	"github.com/bearstonem/helm/config"
+	"github.com/bearstonem/helm/ui"
+	"github.com/bearstonem/helm/web"
 	"github.com/mitchellh/go-homedir"
 
 	tea "github.com/charmbracelet/bubbletea"

@@ -1,9 +1,9 @@
 package command
 
 import (
-	"github.com/ekkinox/yai/config"
-	"github.com/ekkinox/yai/memory"
-	"github.com/ekkinox/yai/session"
+	"github.com/bearstonem/helm/config"
+	"github.com/bearstonem/helm/memory"
+	"github.com/bearstonem/helm/session"
 )
 
 // Context provides commands access to application state.

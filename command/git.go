@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ekkinox/yai/run"
+	"github.com/bearstonem/helm/run"
 )
 
 func cmdDiff(_ string, ctx *Context) Result {

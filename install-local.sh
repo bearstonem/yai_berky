@@ -14,7 +14,7 @@ warn()  { echo -e "${YELLOW} !${RESET}  $1"; }
 fail()  { echo -e "${RED} ✗${RESET}  $1"; exit 1; }
 
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
-BINARY_NAME="yai"
+BINARY_NAME="helm"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── Check prerequisites ──────────────────────────────────────────────
@@ -26,7 +26,7 @@ ok "Go $(go version | awk '{print $3}' | sed 's/go//')"
 
 # ── Build ─────────────────────────────────────────────────────────────
 
-info "Building yai from source"
+info "Building helm from source"
 
 cd "$SCRIPT_DIR"
 go build -ldflags="-s -w" -o "$BINARY_NAME" .
@@ -83,7 +83,7 @@ else
             if [[ "$can_write" == true ]]; then
                 {
                     echo ""
-                    echo "# Added by yai installer"
+                    echo "# Added by helm installer"
                     echo "$LINE"
                 } >> "$RC_FILE"
                 ok "Added $INSTALL_DIR to PATH in $RC_FILE"
@@ -102,13 +102,13 @@ fi
 # ── Verify ────────────────────────────────────────────────────────────
 
 echo ""
-if command -v yai >/dev/null 2>&1; then
+if command -v helm >/dev/null 2>&1; then
     info "Ready to go!"
     echo ""
-    echo "  ${BOLD}yai${RESET}              open the interactive REPL"
-    echo "  ${BOLD}yai -a${RESET} <task>     run agent mode (autonomous)"
-    echo "  ${BOLD}yai -e${RESET} <query>    generate a single command"
-    echo "  ${BOLD}yai -c${RESET} <question> chat with the AI"
+    echo "  ${BOLD}helm${RESET}              open the interactive REPL"
+    echo "  ${BOLD}helm -a${RESET} <task>     run agent mode (autonomous)"
+    echo "  ${BOLD}helm -e${RESET} <query>    generate a single command"
+    echo "  ${BOLD}helm -c${RESET} <question> chat with the AI"
     echo ""
     echo "  Press ${BOLD}tab${RESET} inside the REPL to switch modes (exec / chat / agent)"
 else
@@ -116,10 +116,10 @@ else
     echo ""
     echo "  Run ${BOLD}source $RC_FILE${RESET} or restart your terminal, then:"
     echo ""
-    echo "  ${BOLD}yai${RESET}              open the interactive REPL"
-    echo "  ${BOLD}yai -a${RESET} <task>     run agent mode (autonomous)"
-    echo "  ${BOLD}yai -e${RESET} <query>    generate a single command"
-    echo "  ${BOLD}yai -c${RESET} <question> chat with the AI"
+    echo "  ${BOLD}helm${RESET}              open the interactive REPL"
+    echo "  ${BOLD}helm -a${RESET} <task>     run agent mode (autonomous)"
+    echo "  ${BOLD}helm -e${RESET} <query>    generate a single command"
+    echo "  ${BOLD}helm -c${RESET} <question> chat with the AI"
     echo ""
     echo "  Press ${BOLD}tab${RESET} inside the REPL to switch modes (exec / chat / agent)"
 fi

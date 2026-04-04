@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ekkinox/yai/system"
+	"github.com/bearstonem/helm/system"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -35,7 +35,7 @@ func setupViper(t *testing.T) {
 	viper.Set(user_default_prompt_mode, "exec")
 	viper.Set(user_preferences, "test_preferences")
 
-	require.NoError(t, viper.SafeWriteConfigAs("/tmp/yai.json"))
+	require.NoError(t, viper.SafeWriteConfigAs("/tmp/helm.json"))
 }
 
 func setupViperLegacy(t *testing.T) {
@@ -54,12 +54,12 @@ func setupViperLegacy(t *testing.T) {
 	viper.Set(user_default_prompt_mode, "exec")
 	viper.Set(user_preferences, "legacy_prefs")
 
-	require.NoError(t, viper.SafeWriteConfigAs("/tmp/yai.json"))
+	require.NoError(t, viper.SafeWriteConfigAs("/tmp/helm.json"))
 }
 
 func cleanup(t *testing.T) {
 	t.Helper()
-	os.Remove("/tmp/yai.json")
+	os.Remove("/tmp/helm.json")
 	viper.Reset()
 }
 
