@@ -45,7 +45,7 @@ Providers that don't support OpenAI-style function calling (Ollama, llama.cpp, L
 
 ### Agent Mode
 
-Agent mode lets the AI autonomously complete multi-step tasks. Press `tab` to cycle to the `⎈ agent` prompt, describe your task, and the AI will:
+Agent mode lets the AI autonomously complete multi-step tasks. Press `tab` to cycle to the `🖖 agent` prompt, describe your task, and the AI will:
 
 1. Plan what needs to be done
 2. Run shell commands, read/write/edit files, search the codebase

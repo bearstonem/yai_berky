@@ -24,12 +24,32 @@ info "Checking prerequisites"
 command -v go >/dev/null 2>&1 || fail "Go is not installed. Install it from https://go.dev/dl/"
 ok "Go $(go version | awk '{print $3}' | sed 's/go//')"
 
+# Check for C compiler (CGO required for sqlite-vec)
+if command -v gcc >/dev/null 2>&1; then
+    ok "C compiler: gcc"
+elif command -v clang >/dev/null 2>&1; then
+    ok "C compiler: clang"
+else
+    fail "No C compiler found. Install gcc or clang (CGO required for sqlite-vec).\n   Debian/Ubuntu: sudo apt-get install build-essential libsqlite3-dev"
+fi
+
+# Check for sqlite3 headers
+if pkg-config --exists sqlite3 2>/dev/null; then
+    ok "SQLite3 development headers"
+elif [[ -f /usr/include/sqlite3.h ]]; then
+    ok "SQLite3 development headers"
+else
+    warn "SQLite3 dev headers may be missing. If build fails, run:"
+    echo "    sudo apt-get install libsqlite3-dev   # Debian/Ubuntu"
+    echo "    brew install sqlite3                   # macOS"
+fi
+
 # ── Build ─────────────────────────────────────────────────────────────
 
-info "Building helm from source"
+info "Building Helm from source"
 
 cd "$SCRIPT_DIR"
-go build -ldflags="-s -w" -o "$BINARY_NAME" .
+CGO_ENABLED=1 go build -ldflags="-s -w" -o "$BINARY_NAME" .
 ok "Built $(pwd)/$BINARY_NAME"
 
 # ── Install ───────────────────────────────────────────────────────────
@@ -40,6 +60,13 @@ mkdir -p "$INSTALL_DIR"
 mv "$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
 chmod +x "$INSTALL_DIR/$BINARY_NAME"
 ok "Installed $INSTALL_DIR/$BINARY_NAME"
+
+# ── Clean up old yai binary if present ────────────────────────────────
+
+if [[ -f "$INSTALL_DIR/yai" ]]; then
+    rm -f "$INSTALL_DIR/yai"
+    ok "Removed old yai binary"
+fi
 
 # ── Ensure it's on PATH ──────────────────────────────────────────────
 
@@ -72,7 +99,6 @@ else
         if [[ -f "$RC_FILE" ]] && grep -qF "$INSTALL_DIR" "$RC_FILE" 2>/dev/null; then
             ok "PATH entry already exists in $RC_FILE"
         else
-            # Avoid failing the install if the user's RC file isn't writable
             can_write=false
             if [[ -e "$RC_FILE" ]]; then
                 [[ -w "$RC_FILE" ]] && can_write=true
@@ -83,7 +109,7 @@ else
             if [[ "$can_write" == true ]]; then
                 {
                     echo ""
-                    echo "# Added by helm installer"
+                    echo "# Added by Helm installer"
                     echo "$LINE"
                 } >> "$RC_FILE"
                 ok "Added $INSTALL_DIR to PATH in $RC_FILE"
@@ -99,27 +125,43 @@ else
     fi
 fi
 
+# ── Migrate config from yai if needed ─────────────────────────────────
+
+if [[ -f "$HOME/.config/yai.json" ]] && [[ ! -f "$HOME/.config/helm.json" ]]; then
+    cp "$HOME/.config/yai.json" "$HOME/.config/helm.json"
+    ok "Migrated config from ~/.config/yai.json → ~/.config/helm.json"
+fi
+
+if [[ -d "$HOME/.config/yai" ]] && [[ ! -d "$HOME/.config/helm" ]]; then
+    cp -r "$HOME/.config/yai" "$HOME/.config/helm"
+    ok "Migrated data from ~/.config/yai/ → ~/.config/helm/"
+fi
+
 # ── Verify ────────────────────────────────────────────────────────────
 
 echo ""
 if command -v helm >/dev/null 2>&1; then
-    info "Ready to go!"
+    info "✦ Helm is ready!"
     echo ""
-    echo "  ${BOLD}helm${RESET}              open the interactive REPL"
-    echo "  ${BOLD}helm -a${RESET} <task>     run agent mode (autonomous)"
-    echo "  ${BOLD}helm -e${RESET} <query>    generate a single command"
-    echo "  ${BOLD}helm -c${RESET} <question> chat with the AI"
+    echo "  ${BOLD}helm${RESET}                  interactive REPL"
+    echo "  ${BOLD}helm --gui${RESET}            web GUI (agents, skills, settings)"
+    echo "  ${BOLD}helm -a${RESET} <task>         agent mode (autonomous)"
+    echo "  ${BOLD}helm -c${RESET} <question>     chat with the AI"
+    echo "  ${BOLD}helm -e${RESET} <query>        generate a single command"
+    echo "  ${BOLD}helm --pipe -a${RESET} <task>   headless mode (no TUI, for scripts)"
     echo ""
-    echo "  Press ${BOLD}tab${RESET} inside the REPL to switch modes (exec / chat / agent)"
+    echo "  Press ${BOLD}tab${RESET} inside the REPL to switch modes (▶ exec / 📡 chat / 🖖 agent)"
 else
     info "Almost ready!"
     echo ""
     echo "  Run ${BOLD}source $RC_FILE${RESET} or restart your terminal, then:"
     echo ""
-    echo "  ${BOLD}helm${RESET}              open the interactive REPL"
-    echo "  ${BOLD}helm -a${RESET} <task>     run agent mode (autonomous)"
-    echo "  ${BOLD}helm -e${RESET} <query>    generate a single command"
-    echo "  ${BOLD}helm -c${RESET} <question> chat with the AI"
+    echo "  ${BOLD}helm${RESET}                  interactive REPL"
+    echo "  ${BOLD}helm --gui${RESET}            web GUI (agents, skills, settings)"
+    echo "  ${BOLD}helm -a${RESET} <task>         agent mode (autonomous)"
+    echo "  ${BOLD}helm -c${RESET} <question>     chat with the AI"
+    echo "  ${BOLD}helm -e${RESET} <query>        generate a single command"
+    echo "  ${BOLD}helm --pipe -a${RESET} <task>   headless mode (no TUI, for scripts)"
     echo ""
-    echo "  Press ${BOLD}tab${RESET} inside the REPL to switch modes (exec / chat / agent)"
+    echo "  Press ${BOLD}tab${RESET} inside the REPL to switch modes (▶ exec / 📡 chat / 🖖 agent)"
 fi

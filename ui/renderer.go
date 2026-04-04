@@ -225,7 +225,7 @@ func (r *Renderer) RenderRemoteInfo(host string, hostname string, os string) str
 func (r *Renderer) RenderHelpMessage() string {
 	help := "**Help**\n"
 	help += "- `↑`/`↓` : navigate in history\n"
-	help += "- `tab`   : switch between `⚓ exec`, `🧭 chat`, and `⎈ agent` prompt modes\n"
+	help += "- `tab`   : switch between `▶ exec`, `📡 chat`, and `🖖 agent` prompt modes\n"
 	help += "- `ctrl+h`: show help\n"
 	help += "- `ctrl+s`: edit settings\n"
 	help += "- `ctrl+r`: clear terminal and reset discussion history\n"
