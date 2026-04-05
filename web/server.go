@@ -1145,6 +1145,15 @@ func (s *Server) selfImproveLoop(ctx context.Context) {
 	}
 }
 
+// safeSend attempts to send on ch without panicking if it's closed.
+func safeSend(ch chan ai.AgentEvent, event ai.AgentEvent) {
+	defer func() { recover() }()
+	select {
+	case ch <- event:
+	default:
+	}
+}
+
 func (s *Server) runSelfImproveCycle(ctx context.Context) {
 	s.mu.Lock()
 	s.selfImproveCycle++
@@ -1160,23 +1169,14 @@ func (s *Server) runSelfImproveCycle(ctx context.Context) {
 	reason := fmt.Sprintf("self-improvement cycle %d", cycle)
 	entry, backupErr := backup.Create(s.homeDir, s.sourceDir, reason)
 	if backupErr != nil {
-		select {
-		case ch <- ai.AgentEvent{Type: ai.AgentEventThinking, Content: fmt.Sprintf("Warning: backup failed: %s", backupErr)}:
-		default:
-		}
+		safeSend(ch, ai.AgentEvent{Type: ai.AgentEventThinking, Content: fmt.Sprintf("Warning: backup failed: %s", backupErr)})
 	} else {
-		select {
-		case ch <- ai.AgentEvent{Type: ai.AgentEventThinking, Content: fmt.Sprintf("=== Self-Improvement Cycle %d (backed up: %s) ===", cycle, entry.ID)}:
-		default:
-		}
+		safeSend(ch, ai.AgentEvent{Type: ai.AgentEventThinking, Content: fmt.Sprintf("=== Self-Improvement Cycle %d (backed up: %s) ===", cycle, entry.ID)})
 	}
 
 	engine, err := ai.NewEngine(ai.AgentEngineMode, s.config)
 	if err != nil {
-		select {
-		case ch <- ai.AgentEvent{Type: ai.AgentEventError, Error: err}:
-		default:
-		}
+		safeSend(ch, ai.AgentEvent{Type: ai.AgentEventError, Error: err})
 		return
 	}
 	engine.StartNewSession()
@@ -1195,10 +1195,7 @@ func (s *Server) runSelfImproveCycle(ctx context.Context) {
 		content += "\n## Status\n\nPending user review.\n"
 		os.WriteFile(reviewFile, []byte(content), 0644)
 
-		select {
-		case ch <- ai.AgentEvent{Type: ai.AgentEventThinking, Content: fmt.Sprintf("Saved question for user review: %s", reviewFile)}:
-		default:
-		}
+		safeSend(ch, ai.AgentEvent{Type: ai.AgentEventThinking, Content: fmt.Sprintf("Saved question for user review: %s", reviewFile)})
 
 		return "This question has been saved for user review at " + reviewFile + ". Continue your cycle without waiting — skip this task or find an alternative approach that doesn't require user input.", nil
 	})
@@ -1240,10 +1237,7 @@ func (s *Server) runSelfImproveCycle(ctx context.Context) {
 	// Forward events to broadcast channel
 	agentCh := engine.GetAgentChannel()
 	for event := range agentCh {
-		select {
-		case ch <- event:
-		default: // drop if buffer full / no subscribers
-		}
+		safeSend(ch, event)
 	}
 
 	<-done
@@ -1254,10 +1248,7 @@ func (s *Server) runSelfImproveCycle(ctx context.Context) {
 	s.mu.Unlock()
 
 	// Emit cycle end
-	select {
-	case ch <- ai.AgentEvent{Type: ai.AgentEventDone}:
-	default:
-	}
+	safeSend(ch, ai.AgentEvent{Type: ai.AgentEventDone})
 }
 
 // Update escalation to also check self-improve engine
