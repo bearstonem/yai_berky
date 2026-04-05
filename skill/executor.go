@@ -3,6 +3,7 @@ package skill
 import (
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -56,14 +57,28 @@ func Execute(homeDir string, m Manifest, argsJSON string) (string, error) {
 func interpreterForLanguage(lang string) string {
 	switch strings.ToLower(lang) {
 	case "python", "python3", "py":
+		if runtime.GOOS == "windows" {
+			return "python"
+		}
 		return "python3"
 	case "node", "nodejs", "javascript", "js":
 		return "node"
 	case "ruby", "rb":
 		return "ruby"
+	case "powershell", "pwsh", "ps1":
+		return "powershell"
 	case "bash", "sh", "shell", "":
+		if runtime.GOOS == "windows" {
+			if _, err := exec.LookPath("bash"); err == nil {
+				return "bash"
+			}
+			return "powershell"
+		}
 		return "bash"
 	default:
+		if runtime.GOOS == "windows" {
+			return "powershell"
+		}
 		return "bash"
 	}
 }

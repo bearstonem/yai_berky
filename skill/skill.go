@@ -308,6 +308,8 @@ func extensionForLanguage(lang string) string {
 		return ".js"
 	case "ruby", "rb":
 		return ".rb"
+	case "powershell", "pwsh", "ps1":
+		return ".ps1"
 	case "bash", "sh", "shell", "":
 		return ".sh"
 	default:
