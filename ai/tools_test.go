@@ -15,14 +15,17 @@ import (
 
 func TestAgentTools(t *testing.T) {
 	tools := AgentTools()
-	assert.Len(t, tools, 7)
+	assert.True(t, len(tools) >= 18, "expected at least 18 built-in tools, got %d", len(tools))
 
 	names := make([]string, len(tools))
 	for i, tool := range tools {
 		names[i] = tool.Name
-		assert.NotEmpty(t, tool.Description)
-		assert.True(t, json.Valid(tool.Parameters))
+		assert.NotEmpty(t, tool.Description, "tool %s has empty description", tool.Name)
+		assert.True(t, json.Valid(tool.Parameters), "tool %s has invalid parameter JSON", tool.Name)
 	}
+
+	// Core tools
+	assert.Contains(t, names, "web_search")
 	assert.Contains(t, names, "run_command")
 	assert.Contains(t, names, "read_file")
 	assert.Contains(t, names, "list_directory")
@@ -30,6 +33,24 @@ func TestAgentTools(t *testing.T) {
 	assert.Contains(t, names, "edit_file")
 	assert.Contains(t, names, "search_files")
 	assert.Contains(t, names, "find_files")
+
+	// Skill management
+	assert.Contains(t, names, "create_skill")
+	assert.Contains(t, names, "list_skills")
+	assert.Contains(t, names, "remove_skill")
+
+	// Agent management
+	assert.Contains(t, names, "create_agent")
+	assert.Contains(t, names, "delegate_task")
+	assert.Contains(t, names, "escalate_to_user")
+
+	// Goal management
+	assert.Contains(t, names, "list_goals")
+	assert.Contains(t, names, "create_goal")
+	assert.Contains(t, names, "update_goal")
+
+	// Restart
+	assert.Contains(t, names, "restart_helm")
 }
 
 func TestToolExecutorRunCommand(t *testing.T) {
