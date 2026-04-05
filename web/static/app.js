@@ -191,10 +191,11 @@ function sendChat() {
   if (!message || chatStreaming) return;
 
   // Handle slash commands
-  if (message === '/new') {
+  if (message.startsWith('/')) {
     input.value = '';
     autoResize(input);
-    newChat();
+    if (message === '/new') { newChat(); return; }
+    executeSlashCommand(message, 'chat-messages');
     return;
   }
 
@@ -452,10 +453,11 @@ function sendAgent() {
   const message = input.value.trim();
   if (!message || agentRunning) return;
 
-  if (message === '/new') {
+  if (message.startsWith('/')) {
     input.value = '';
     autoResize(input);
-    newAgentTask();
+    if (message === '/new') { newAgentTask(); return; }
+    executeSlashCommand(message, 'agent-messages');
     return;
   }
 
@@ -707,6 +709,52 @@ function addMessage(containerId, text, type) {
   area.appendChild(el);
   area.scrollTop = area.scrollHeight;
   return el;
+}
+
+// --- Slash Commands (GUI) ---
+
+async function executeSlashCommand(input, containerId) {
+  const area = document.getElementById(containerId);
+  addMessageTo(area, input, 'user');
+
+  try {
+    const res = await fetch(API + '/api/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input })
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      addMessageTo(area, data.error || 'Unknown error', 'error');
+      return;
+    }
+
+    // Handle special actions
+    if (data.clear) {
+      area.innerHTML = '';
+    }
+    if (data.reset) {
+      addMessageTo(area, '[conversation reset]', 'system');
+    }
+
+    if (data.output) {
+      const el = document.createElement('div');
+      el.className = 'msg msg-assistant';
+      // Render markdown output
+      try {
+        el.innerHTML = renderFormattedText(data.output);
+      } catch(e) {
+        el.textContent = data.output;
+      }
+      if (data.is_error) el.style.color = 'var(--error)';
+      area.appendChild(el);
+      area.scrollTop = area.scrollHeight;
+    }
+  } catch(e) {
+    addMessageTo(area, 'Command error: ' + e.message, 'error');
+  }
 }
 
 // --- Skills ---

@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/bearstonem/helm/command"
 	"github.com/bearstonem/helm/cron"
 	"github.com/bearstonem/helm/agent"
 	"github.com/bearstonem/helm/backup"
@@ -107,6 +108,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/self-improve/status", s.corsWrap(s.handleSelfImproveStatus))
 	mux.HandleFunc("/api/self-improve/stream", s.corsWrap(s.handleSelfImproveStream))
 	mux.HandleFunc("/api/self-improve/reviews", s.corsWrap(s.handleEvolutionReviews))
+	mux.HandleFunc("/api/command", s.corsWrap(s.handleCommand))
 	mux.HandleFunc("/api/workspace", s.corsWrap(s.handleWorkspace))
 	mux.HandleFunc("/api/workspace/browse", s.corsWrap(s.handleWorkspaceBrowse))
 	mux.HandleFunc("/api/cron", s.corsWrap(s.handleCronJobs))
@@ -972,6 +974,73 @@ func (s *Server) handleGoalByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.jsonError(w, "method not allowed", 405)
 	}
+}
+
+// --- Slash Commands ---
+
+func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		s.jsonError(w, "method not allowed", 405)
+		return
+	}
+
+	var req struct {
+		Input string `json:"input"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonError(w, "invalid JSON: "+err.Error(), 400)
+		return
+	}
+
+	name, args := command.Parse(req.Input)
+	if name == "" {
+		s.jsonError(w, "not a slash command", 400)
+		return
+	}
+
+	reg := command.NewRegistry()
+	command.RegisterBuiltins(reg)
+
+	cmd := reg.Get(name)
+	if cmd == nil {
+		s.jsonError(w, fmt.Sprintf("unknown command: /%s", name), 400)
+		return
+	}
+
+	ctx := &command.Context{
+		Config:  s.config,
+		HomeDir: s.homeDir,
+		WorkDir: s.engine.GetToolExecutor().GetWorkDir(),
+		Mode:    "chat",
+		ResetFn: func() {
+			s.engine.StartNewSession()
+		},
+		SessionList: func() []session.SessionInfo {
+			list, _ := session.List(s.homeDir)
+			return list
+		},
+		GetModelFn: func() string {
+			return s.config.GetAiConfig().GetModel()
+		},
+		MemoryStore: s.engine.GetMemoryStore(),
+		ListAgents: func() []agent.Profile {
+			agents, _ := agent.LoadAll(s.homeDir)
+			return agents
+		},
+		ListGoals: func() []goal.Goal {
+			goals, _ := goal.LoadAll(s.homeDir)
+			return goals
+		},
+	}
+
+	result := cmd.Handler(args, ctx)
+
+	s.jsonResponse(w, map[string]interface{}{
+		"output":   result.Output,
+		"is_error": result.IsError,
+		"clear":    result.Clear,
+		"reset":    result.Reset,
+	})
 }
 
 // --- Workspace ---
