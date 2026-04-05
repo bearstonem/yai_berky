@@ -704,10 +704,10 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 	}()
 
-	// Respect auto-execute config — same behavior as terminal REPL
-	autoExec := s.config.GetUserConfig().GetAgentAutoExecute()
+	// GUI always auto-executes tools since there's no interactive approval prompt.
+	// Users can still control tool access via permission_mode in settings.
 	go func() {
-		engine.AgentCompletion(req.Message, autoExec)
+		engine.AgentCompletion(req.Message, true)
 	}()
 
 	ch := engine.GetAgentChannel()
