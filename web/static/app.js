@@ -16,6 +16,9 @@ function switchPage(page) {
   document.getElementById('page-' + page).classList.add('active');
   document.querySelector('[data-page="' + page + '"]').classList.add('active');
 
+  // Close delegation panel when leaving agent page
+  if (page !== 'agent' && delegationPanelOpen) closeDelegationPanel();
+
   // Load data for the page
   if (page === 'skills') loadSkills();
   if (page === 'sessions') loadSessions();
@@ -67,7 +70,10 @@ function sendChat() {
   area.appendChild(placeholder);
   let fullText = '';
 
-  fetchSSE('/api/chat', { message }, {
+  const chatBody = { message };
+  if (activeSessionId) { chatBody.session_id = activeSessionId; activeSessionId = null; }
+
+  fetchSSE('/api/chat', chatBody, {
     content: (data) => {
       fullText += data;
       // Show raw text while streaming (fast feedback)
@@ -93,6 +99,208 @@ function sendChat() {
 // --- Agent ---
 
 let agentRunning = false;
+let activeAgents = {}; // {agentId: {name, status, task}} — tracks all agents
+let delegationEvents = {}; // {agentId: {name, status, task, events: [{type, data, ts}]}}
+let delegationPanelOpen = false;
+let delegTreeRafPending = false;
+
+function updateStatusPanel() {
+  const panel = document.getElementById('agent-status-panel');
+  const ids = Object.keys(activeAgents);
+
+  if (ids.length === 0 && !agentRunning) {
+    panel.classList.add('hidden');
+    return;
+  }
+
+  panel.classList.remove('hidden');
+  let html = '';
+
+  // Primary agent chip
+  if (agentRunning) {
+    const primaryDone = ids.length > 0 && ids.every(id => activeAgents[id].status !== 'active');
+    const cls = primaryDone ? 'active' : 'active';
+    html += '<div class="agent-status-chip active">' +
+      '<span class="status-dot"></span> Primary Agent' +
+      '<span class="status-label">orchestrating</span></div>';
+  }
+
+  // Sub-agent chips
+  for (const id of ids) {
+    const a = activeAgents[id];
+    let cls = 'active';
+    let label = 'working...';
+    if (a.status === 'done') { cls = 'done'; label = 'done'; }
+    else if (a.status === 'failed') { cls = 'failed'; label = 'failed'; }
+    else if (a.status === 'waiting') { cls = 'waiting'; label = 'awaiting user'; }
+
+    html += '<div class="agent-status-chip ' + cls + '">' +
+      '<span class="status-dot"></span> ' + escapeHtml(a.name) +
+      '<span class="status-label">' + label + '</span></div>';
+  }
+
+  panel.innerHTML = html;
+}
+
+// --- Delegation Flow Panel ---
+
+function captureAgentEvent(agentId, type, data) {
+  const id = agentId || '__primary__';
+  if (!delegationEvents[id]) {
+    delegationEvents[id] = {
+      name: (data && data.agent_name) || (id === '__primary__' ? 'Primary Agent' : id),
+      status: 'active',
+      task: '',
+      events: []
+    };
+  }
+  delegationEvents[id].events.push({ type, data: data || {}, ts: Date.now() });
+  scheduleDelegTreeRender();
+}
+
+function scheduleDelegTreeRender() {
+  if (!delegationPanelOpen || delegTreeRafPending) return;
+  delegTreeRafPending = true;
+  requestAnimationFrame(() => {
+    renderDelegationTree();
+    delegTreeRafPending = false;
+  });
+}
+
+function openDelegationPanel() {
+  document.getElementById('delegation-panel').classList.remove('hidden');
+  delegationPanelOpen = true;
+  renderDelegationTree();
+}
+
+function closeDelegationPanel() {
+  document.getElementById('delegation-panel').classList.add('hidden');
+  delegationPanelOpen = false;
+}
+
+function toggleDelegationPanel() {
+  delegationPanelOpen ? closeDelegationPanel() : openDelegationPanel();
+}
+
+function renderDelegationTree() {
+  const container = document.getElementById('deleg-tree');
+  if (!container) return;
+
+  const primary = delegationEvents['__primary__'];
+  if (!primary) {
+    container.innerHTML = '<div class="empty-state"><p>No activity yet. Run a task to see the delegation flow.</p></div>';
+    return;
+  }
+
+  let html = renderDelegNode('__primary__', primary);
+
+  const children = Object.entries(delegationEvents).filter(([id]) => id !== '__primary__');
+  if (children.length > 0) {
+    html += '<div class="deleg-children">';
+    for (const [id, agent] of children) {
+      html += renderDelegNode(id, agent);
+    }
+    html += '</div>';
+  }
+
+  container.innerHTML = html;
+
+  // Update toggle button activity indicator
+  const toggleBtn = document.getElementById('deleg-toggle');
+  if (toggleBtn) {
+    if (children.some(([, a]) => a.status === 'active')) {
+      toggleBtn.classList.add('has-activity');
+    } else {
+      toggleBtn.classList.remove('has-activity');
+    }
+  }
+}
+
+function renderDelegNode(id, agent) {
+  const statusClass = agent.status || 'active';
+  const taskSnippet = truncate(agent.task || '', 60);
+  const evCount = agent.events.length;
+  const toolCalls = agent.events.filter(e => e.type === 'tool_call').length;
+  const safeId = escapeHtml(id).replace(/'/g, "\\'");
+
+  return '<div class="deleg-node ' + statusClass + '" onclick="showDelegationDetail(\'' + safeId + '\')">' +
+    '<div class="deleg-node-name">' +
+    '<span class="deleg-node-dot"></span>' +
+    escapeHtml(agent.name) +
+    '</div>' +
+    (taskSnippet ? '<div class="deleg-node-task">' + escapeHtml(taskSnippet) + '</div>' : '') +
+    '<div class="deleg-node-meta">' +
+    '<span>' + evCount + ' events</span>' +
+    (toolCalls > 0 ? '<span>' + toolCalls + ' tool calls</span>' : '') +
+    '<span>' + statusClass + '</span>' +
+    '</div>' +
+    '</div>';
+}
+
+function showDelegationDetail(agentId) {
+  const agent = delegationEvents[agentId];
+  if (!agent) return;
+
+  document.getElementById('deleg-tree').classList.add('hidden');
+  const detail = document.getElementById('deleg-detail');
+  detail.classList.remove('hidden');
+  document.getElementById('deleg-detail-title').textContent = agent.name;
+
+  const body = document.getElementById('deleg-detail-body');
+  body.innerHTML = agent.events.map(ev => {
+    let cls = '', label = '', content = '';
+    switch (ev.type) {
+      case 'tool_call':
+        cls = 'tool-call';
+        label = 'Tool Call';
+        content = '<strong>' + escapeHtml(ev.data.name || '') + '</strong><br>' +
+          '<code>' + escapeHtml(truncate(ev.data.arguments || '', 500)) + '</code>';
+        break;
+      case 'tool_result':
+        cls = 'tool-result';
+        label = 'Result';
+        content = escapeHtml(truncate(ev.data.content || '', 500));
+        break;
+      case 'thinking':
+        cls = 'thinking';
+        label = 'Thinking';
+        content = escapeHtml(truncate(ev.data.content || '', 300));
+        break;
+      case 'answer':
+        cls = 'answer';
+        label = 'Answer';
+        content = escapeHtml(truncate(ev.data.content || '', 500));
+        break;
+      case 'sub_agent_start':
+        cls = 'tool-call';
+        label = 'Delegated';
+        content = 'Delegated to <strong>' + escapeHtml(ev.data.agent_name || '') + '</strong>: ' + escapeHtml(truncate(ev.data.task || '', 200));
+        break;
+      case 'sub_agent_done':
+        cls = 'answer';
+        label = 'Sub-Agent Done';
+        content = escapeHtml(ev.data.agent_name || '') + ': ' + escapeHtml(ev.data.status || '');
+        break;
+      case 'escalation':
+        cls = 'escalation';
+        label = 'Escalation';
+        content = escapeHtml(ev.data.question || '');
+        break;
+      default:
+        label = ev.type;
+        content = JSON.stringify(ev.data).substring(0, 200);
+    }
+    const time = new Date(ev.ts).toLocaleTimeString();
+    return '<div class="deleg-detail-item ' + cls + '">' +
+      '<div class="detail-label">' + label + ' &middot; ' + time + '</div>' +
+      content + '</div>';
+  }).join('');
+}
+
+function closeDelegationDetail() {
+  document.getElementById('deleg-detail').classList.add('hidden');
+  document.getElementById('deleg-tree').classList.remove('hidden');
+}
 
 function sendAgent() {
   const input = document.getElementById('agent-input');
@@ -103,17 +311,23 @@ function sendAgent() {
   input.value = '';
   autoResize(input);
   agentRunning = true;
+  activeAgents = {};
+  delegationEvents = { '__primary__': { name: 'Primary Agent', status: 'active', task: message, events: [] } };
+  updateStatusPanel();
+  if (delegationPanelOpen) renderDelegationTree();
 
   const area = document.getElementById('agent-messages');
   let currentMsg = null;
   const agentId = document.getElementById('agent-profile-select').value;
   const body = { message };
   if (agentId) body.agent_id = agentId;
+  if (activeSessionId) { body.session_id = activeSessionId; activeSessionId = null; }
 
   fetchSSE('/api/agent', body, {
     thinking: (data) => {
       try {
         const info = JSON.parse(data);
+        captureAgentEvent(info.agent_id, 'thinking', info);
         const tag = info.agent_name ? agentTag(info.agent_name) : '';
         if (tag) {
           const wrapper = document.createElement('div');
@@ -132,6 +346,7 @@ function sendAgent() {
     tool_call: (data) => {
       try {
         const tc = JSON.parse(data);
+        captureAgentEvent(tc.agent_id, 'tool_call', tc);
         const el = document.createElement('div');
         el.className = 'msg msg-tool' + (tc.agent_id ? ' msg-sub-agent' : '');
         const tag = tc.agent_name ? agentTag(tc.agent_name) : '';
@@ -147,6 +362,7 @@ function sendAgent() {
     tool_result: (data) => {
       try {
         const info = JSON.parse(data);
+        captureAgentEvent(info.agent_id, 'tool_result', info);
         const el = document.createElement('div');
         el.className = 'msg msg-tool' + (info.agent_id ? ' msg-sub-agent' : '');
         const tag = info.agent_name ? agentTag(info.agent_name) : '';
@@ -164,6 +380,7 @@ function sendAgent() {
     answer: (data) => {
       try {
         const info = JSON.parse(data);
+        captureAgentEvent(info.agent_id, 'answer', info);
         if (info.agent_name) {
           const wrapper = document.createElement('div');
           wrapper.className = 'msg-sub-agent-group';
@@ -181,6 +398,15 @@ function sendAgent() {
     sub_agent_start: (data) => {
       try {
         const info = JSON.parse(data);
+        activeAgents[info.agent_id] = { name: info.agent_name, status: 'active', task: info.task };
+        // Track in delegation events + auto-open panel
+        if (!delegationEvents[info.agent_id]) {
+          delegationEvents[info.agent_id] = { name: info.agent_name, status: 'active', task: info.task, events: [] };
+        }
+        delegationEvents[info.agent_id].task = info.task;
+        captureAgentEvent(info.agent_id, 'sub_agent_start', info);
+        if (!delegationPanelOpen) openDelegationPanel();
+        updateStatusPanel();
         const el = document.createElement('div');
         el.className = 'msg msg-sub-agent-start';
         el.innerHTML = '<span class="sub-agent-icon">&#x1F6F8;</span> ' +
@@ -193,6 +419,14 @@ function sendAgent() {
     sub_agent_done: (data) => {
       try {
         const info = JSON.parse(data);
+        if (activeAgents[info.agent_id]) {
+          activeAgents[info.agent_id].status = info.status === 'completed' ? 'done' : 'failed';
+          updateStatusPanel();
+        }
+        if (delegationEvents[info.agent_id]) {
+          delegationEvents[info.agent_id].status = info.status === 'completed' ? 'done' : 'failed';
+        }
+        captureAgentEvent(info.agent_id, 'sub_agent_done', info);
         const el = document.createElement('div');
         el.className = 'msg msg-sub-agent-done';
         el.innerHTML = '<span class="sub-agent-icon">&#x2705;</span> ' +
@@ -205,6 +439,14 @@ function sendAgent() {
     escalation: (data) => {
       try {
         const info = JSON.parse(data);
+        if (info.agent_id && activeAgents[info.agent_id]) {
+          activeAgents[info.agent_id].status = 'waiting';
+          updateStatusPanel();
+        }
+        if (info.agent_id && delegationEvents[info.agent_id]) {
+          delegationEvents[info.agent_id].status = 'waiting';
+        }
+        captureAgentEvent(info.agent_id, 'escalation', info);
         const el = document.createElement('div');
         el.className = 'msg msg-escalation';
         const tag = info.agent_name ? agentTag(info.agent_name) : '';
@@ -225,6 +467,9 @@ function sendAgent() {
     },
     done: () => {
       agentRunning = false;
+      if (delegationEvents['__primary__']) delegationEvents['__primary__'].status = 'done';
+      updateStatusPanel();
+      scheduleDelegTreeRender();
     }
   });
 }
@@ -508,10 +753,86 @@ function filterSessions() {
       </div>
       <div class="card-meta">${escapeHtml(s.id)} &middot; ${s.messages} messages &middot; ${formatDate(s.updated_at)}</div>
       <div class="card-actions">
+        <button class="card-btn" onclick="event.stopPropagation(); resumeSession('${escapeHtml(s.id)}', '${escapeHtml(s.mode)}')">Resume</button>
         <button class="card-btn danger" onclick="event.stopPropagation(); deleteSession('${escapeHtml(s.id)}')">Delete</button>
       </div>
     </div>
   `).join('');
+}
+
+let activeSessionId = null; // tracks the session being resumed
+
+async function resumeSession(id, mode) {
+  const res = await fetch(API + '/api/sessions/' + id);
+  if (!res.ok) return;
+  const sess = await res.json();
+
+  activeSessionId = id;
+
+  // Switch to the appropriate page
+  if (mode === 'agent') {
+    switchPage('agent');
+    const area = document.getElementById('agent-messages');
+    area.innerHTML = '';
+    // Render previous messages
+    renderSessionHistory(area, sess.messages);
+    // Add a resume indicator
+    const indicator = document.createElement('div');
+    indicator.className = 'msg msg-resume-indicator';
+    indicator.innerHTML = '&#x1F4CB; Resumed session <strong>' + escapeHtml(id) + '</strong> &mdash; ' +
+      escapeHtml(sess.summary || 'untitled') + ' (' + sess.messages.length + ' messages)';
+    area.appendChild(indicator);
+    area.scrollTop = area.scrollHeight;
+  } else {
+    switchPage('chat');
+    const area = document.getElementById('chat-messages');
+    area.innerHTML = '';
+    renderSessionHistory(area, sess.messages);
+    const indicator = document.createElement('div');
+    indicator.className = 'msg msg-resume-indicator';
+    indicator.innerHTML = '&#x1F4CB; Resumed session <strong>' + escapeHtml(id) + '</strong> &mdash; ' +
+      escapeHtml(sess.summary || 'untitled') + ' (' + sess.messages.length + ' messages)';
+    area.appendChild(indicator);
+    area.scrollTop = area.scrollHeight;
+  }
+}
+
+function renderSessionHistory(container, messages) {
+  for (const m of messages) {
+    if (m.role === 'system') continue; // skip system prompt
+    if (m.role === 'user') {
+      addMessageTo(container, m.content, 'user');
+    } else if (m.role === 'tool') {
+      const el = document.createElement('div');
+      el.className = 'msg msg-tool';
+      let label = m.tool_call_id || 'tool';
+      el.innerHTML = '<div class="tool-result">' + escapeHtml(truncate(m.content, 300)) + '</div>';
+      container.appendChild(el);
+    } else if (m.role === 'assistant') {
+      if (m.tool_calls && m.tool_calls.length > 0) {
+        // Show tool calls
+        for (const tc of m.tool_calls) {
+          const el = document.createElement('div');
+          el.className = 'msg msg-tool';
+          el.innerHTML = '<div class="tool-name">' + escapeHtml(tc.name) + '</div>' +
+            '<div>' + escapeHtml(truncate(tc.arguments, 200)) + '</div>';
+          container.appendChild(el);
+        }
+        if (m.content) {
+          renderFormattedResponse(container, m.content, 'thinking');
+        }
+      } else if (m.content) {
+        renderFormattedResponse(container, m.content);
+      }
+    }
+  }
+}
+
+function addMessageTo(container, text, type) {
+  const el = document.createElement('div');
+  el.className = 'msg msg-' + type;
+  el.textContent = text;
+  container.appendChild(el);
 }
 
 async function viewSession(id) {

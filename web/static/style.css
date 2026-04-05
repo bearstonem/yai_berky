@@ -268,6 +268,93 @@ body {
 
 .escalation-field:focus { border-color: var(--warning); }
 
+/* Session resume indicator */
+.msg-resume-indicator {
+  align-self: center;
+  background: var(--bg-surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: center;
+  margin: 8px 0;
+}
+
+/* Agent status panel */
+.agent-status-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.agent-status-panel.hidden { display: none; }
+
+.agent-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  transition: all 0.3s;
+}
+
+.agent-status-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent-hover);
+}
+
+.agent-status-chip.done {
+  border-color: var(--success);
+  background: rgba(63, 185, 80, 0.1);
+  color: var(--success);
+}
+
+.agent-status-chip.failed {
+  border-color: var(--error);
+  background: rgba(248, 81, 73, 0.1);
+  color: var(--error);
+}
+
+.agent-status-chip.waiting {
+  border-color: var(--warning);
+  background: rgba(210, 153, 34, 0.1);
+  color: var(--warning);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.agent-status-chip.active .status-dot {
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.agent-status-chip .status-label {
+  font-size: 11px;
+  color: var(--text-dimmer);
+  margin-left: 2px;
+}
+
 .sub-agent-tag {
   display: inline-block;
   padding: 2px 8px;
@@ -1008,6 +1095,202 @@ body {
 }
 
 .builder-save-bar.hidden { display: none; }
+
+/* --- Delegation Flow Panel --- */
+.delegation-panel {
+  width: 340px;
+  flex-shrink: 0;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.delegation-panel.hidden { display: none; }
+
+.deleg-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.deleg-header h3 { font-size: 14px; font-weight: 600; }
+
+.deleg-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.deleg-node {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+.deleg-node:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-dim);
+}
+
+.deleg-node.active { border-color: var(--accent); background: var(--accent-dim); }
+.deleg-node.done { border-color: var(--success); }
+.deleg-node.failed { border-color: var(--error); }
+.deleg-node.waiting { border-color: var(--warning); }
+
+.deleg-node-name {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.deleg-node-task {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+  line-height: 1.3;
+  max-height: 32px;
+  overflow: hidden;
+}
+
+.deleg-node-meta {
+  font-size: 10px;
+  color: var(--text-dimmer);
+  margin-top: 4px;
+  display: flex;
+  gap: 8px;
+}
+
+.deleg-node-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.deleg-node.active .deleg-node-dot { animation: pulse 1.5s infinite; }
+
+.deleg-children {
+  margin-left: 16px;
+  padding-left: 14px;
+  border-left: 2px solid var(--border);
+}
+
+/* Detail view */
+.deleg-detail {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.deleg-detail.hidden { display: none; }
+
+.deleg-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  flex-shrink: 0;
+}
+
+.deleg-back-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.deleg-back-btn:hover { background: var(--bg-hover); color: var(--text); }
+
+#deleg-detail-title { font-size: 14px; font-weight: 600; }
+
+.deleg-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.deleg-detail-item {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.deleg-detail-item.tool-call {
+  border-left: 3px solid var(--blue);
+}
+
+.deleg-detail-item.tool-result {
+  border-left: 3px solid var(--text-dimmer);
+  color: var(--text-dim);
+}
+
+.deleg-detail-item.thinking {
+  border-left: 3px solid var(--warning);
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.deleg-detail-item.answer {
+  border-left: 3px solid var(--success);
+}
+
+.deleg-detail-item.escalation {
+  border-left: 3px solid var(--warning);
+  background: rgba(210, 153, 34, 0.05);
+}
+
+.deleg-detail-item .detail-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dimmer);
+  margin-bottom: 3px;
+}
+
+/* Toggle button */
+.deleg-toggle-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-left: auto;
+}
+
+.deleg-toggle-btn:hover { background: var(--bg-hover); color: var(--text); }
+
+.deleg-toggle-btn.has-activity {
+  border-color: var(--accent);
+  color: var(--accent-hover);
+  background: var(--accent-dim);
+}
 
 /* Responsive */
 @media (max-width: 768px) {

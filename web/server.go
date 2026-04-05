@@ -515,7 +515,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Message string `json:"message"`
+		Message   string `json:"message"`
+		SessionID string `json:"session_id,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.jsonError(w, "invalid JSON", 400)
@@ -536,13 +537,21 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create a fresh engine for this request in chat mode
+	// Create engine in chat mode
 	engine, err := ai.NewEngine(ai.ChatEngineMode, s.config)
 	if err != nil {
 		sseEvent(w, flusher, "error", err.Error())
 		return
 	}
-	engine.StartNewSession()
+
+	if req.SessionID != "" {
+		if err := engine.LoadSession(s.homeDir, req.SessionID); err != nil {
+			sseEvent(w, flusher, "error", "session not found: "+err.Error())
+			return
+		}
+	} else {
+		engine.StartNewSession()
+	}
 
 	// Start streaming
 	go func() {
@@ -570,8 +579,9 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Message string `json:"message"`
-		AgentID string `json:"agent_id,omitempty"`
+		Message   string `json:"message"`
+		AgentID   string `json:"agent_id,omitempty"`
+		SessionID string `json:"session_id,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.jsonError(w, "invalid JSON", 400)
@@ -607,7 +617,15 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		engine.SetAgentProfile(profile)
 	}
 
-	engine.StartNewSession()
+	// Resume existing session or start new
+	if req.SessionID != "" {
+		if err := engine.LoadSession(s.homeDir, req.SessionID); err != nil {
+			sseEvent(w, flusher, "error", "session not found: "+err.Error())
+			return
+		}
+	} else {
+		engine.StartNewSession()
+	}
 
 	// Track active engine for escalation responses
 	s.mu.Lock()
