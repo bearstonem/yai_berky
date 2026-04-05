@@ -12,6 +12,7 @@ import (
 	"github.com/bearstonem/helm/ai"
 	"github.com/bearstonem/helm/command"
 	"github.com/bearstonem/helm/config"
+	"github.com/bearstonem/helm/cron"
 	"github.com/bearstonem/helm/goal"
 	"github.com/bearstonem/helm/history"
 	"github.com/bearstonem/helm/run"
@@ -97,14 +98,56 @@ type UiComponents struct {
 }
 
 type Ui struct {
-	state        UiState
-	dimensions   UiDimensions
-	components   UiComponents
-	config       *config.Config
-	engine       *ai.Engine
-	history      *history.History
-	commands     *command.Registry
-	usageTracker *command.UsageTracker
+	state          UiState
+	dimensions     UiDimensions
+	components     UiComponents
+	config         *config.Config
+	engine         *ai.Engine
+	history        *history.History
+	commands       *command.Registry
+	usageTracker   *command.UsageTracker
+	cronScheduler  *cron.Scheduler
+}
+
+func (u *Ui) startCronScheduler() {
+	if u.cronScheduler != nil {
+		return // already running
+	}
+	if u.config == nil {
+		return
+	}
+	homeDir := u.config.GetSystemConfig().GetHomeDirectory()
+	if homeDir == "" {
+		return
+	}
+
+	u.cronScheduler = cron.NewScheduler(homeDir, func(job cron.Job) {
+		// In terminal mode, run the job and log output to a file
+		cfg := u.config
+		engine, err := ai.NewEngine(ai.AgentEngineMode, cfg)
+		if err != nil {
+			cron.UpdateStatus(homeDir, job.ID, "error")
+			return
+		}
+		engine.StartNewSession()
+
+		cron.UpdateStatus(homeDir, job.ID, "running")
+		engine.AgentCompletion(job.Instruction, true)
+		close(engine.GetAgentChannel())
+		engine.SaveSession(homeDir)
+		cron.UpdateStatus(homeDir, job.ID, "success")
+
+		// Write output to log file
+		logDir := fmt.Sprintf("%s/.config/helm/cron-logs", homeDir)
+		os.MkdirAll(logDir, 0755)
+		logFile := fmt.Sprintf("%s/%s.log", logDir, job.ID)
+		f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err == nil {
+			fmt.Fprintf(f, "\n--- %s ---\nJob: %s\nStatus: success\n", job.Name, job.ID)
+			f.Close()
+		}
+	})
+	u.cronScheduler.Start()
 }
 
 func NewUi(input *UiInput) *Ui {
@@ -664,6 +707,7 @@ func (u *Ui) startRepl(cfg *config.Config) tea.Cmd {
 			}
 
 			u.engine = engine
+			u.startCronScheduler()
 			u.engine.StartNewSession()
 			u.usageTracker = command.NewUsageTracker(cfg.GetAiConfig().GetModel())
 			u.engine.SetOnUsage(func(in, out int) {
@@ -728,6 +772,7 @@ func (u *Ui) startCli(cfg *config.Config) tea.Cmd {
 	}
 
 	u.engine = engine
+	u.startCronScheduler()
 	u.engine.StartNewSession()
 	u.usageTracker = command.NewUsageTracker(cfg.GetAiConfig().GetModel())
 	u.engine.SetOnUsage(func(in, out int) {
@@ -913,6 +958,7 @@ func (u *Ui) finishConfig() tea.Cmd {
 	}
 
 	u.engine = engine
+	u.startCronScheduler()
 
 	providerInfo := u.components.renderer.RenderProviderInfo(cfg.GetAiConfig())
 
@@ -1569,6 +1615,7 @@ func (u *Ui) editSettings() tea.Cmd {
 			return run.NewRunOutput(error, "[settings error]", "")
 		}
 		u.engine = engine
+		u.startCronScheduler()
 
 		return run.NewRunOutput(nil, "", "[settings ok]")
 	})

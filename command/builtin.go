@@ -3,8 +3,10 @@ package command
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/bearstonem/helm/config"
+	"github.com/bearstonem/helm/cron"
 	"github.com/bearstonem/helm/skill"
 )
 
@@ -128,6 +130,13 @@ func RegisterBuiltins(r *Registry) {
 		Description: "List current self-improvement goals",
 		Handler:     cmdGoals,
 	})
+
+	r.Register(&Command{
+		Name:        "cron",
+		Aliases:     []string{"jobs"},
+		Description: "List scheduled cron jobs",
+		Handler:     cmdCron,
+	})
 }
 
 func cmdHelp(_ string, ctx *Context) Result {
@@ -151,6 +160,7 @@ func cmdHelp(_ string, ctx *Context) Result {
 		{"/agent [select <id>|clear]", "List, select, or clear agent profile"},
 		{"/goals", "List self-improvement goals"},
 		{"/memory", "Show vector memory stats"},
+		{"/cron", "List scheduled cron jobs and their status"},
 		{"/diff", "Show git diff of working tree"},
 		{"/commit <message>", "Stage all and commit"},
 		{"/status", "Show git status"},
@@ -651,4 +661,34 @@ func cmdMode(args string, ctx *Context) Result {
 	default:
 		return Result{Output: fmt.Sprintf("Unknown mode: %s. Use exec, chat, or agent.", args), IsError: true}
 	}
+}
+
+func cmdCron(_ string, ctx *Context) Result {
+	jobs, err := cron.LoadAll(ctx.HomeDir)
+	if err != nil {
+		return Result{Output: fmt.Sprintf("Error loading cron jobs: %s", err), IsError: true}
+	}
+	if len(jobs) == 0 {
+		return Result{Output: "No cron jobs configured.\n\nUse the web GUI (`helm --gui`) to create cron jobs."}
+	}
+
+	out := "**Scheduled Cron Jobs**\n\n"
+	out += "| Name | Schedule | Enabled | Last Run | Status |\n"
+	out += "|---|---|---|---|---|\n"
+	for _, j := range jobs {
+		enabled := "yes"
+		if !j.Enabled {
+			enabled = "no"
+		}
+		lastRun := "never"
+		if j.LastRunAt != nil {
+			lastRun = j.LastRunAt.Format(time.RFC822)
+		}
+		status := j.LastStatus
+		if status == "" {
+			status = "pending"
+		}
+		out += fmt.Sprintf("| `%s` | `%s` | %s | %s | %s |\n", j.Name, j.Schedule, enabled, lastRun, status)
+	}
+	return Result{Output: out}
 }
