@@ -114,6 +114,20 @@ func RegisterBuiltins(r *Registry) {
 		Description: "List or remove agent-created skills",
 		Handler:     cmdSkill,
 	})
+
+	r.Register(&Command{
+		Name:        "agent",
+		Aliases:     []string{"agents"},
+		Description: "List, select, or clear agent profiles",
+		Handler:     cmdAgent,
+	})
+
+	r.Register(&Command{
+		Name:        "goals",
+		Aliases:     []string{"goal"},
+		Description: "List current self-improvement goals",
+		Handler:     cmdGoals,
+	})
 }
 
 func cmdHelp(_ string, ctx *Context) Result {
@@ -128,12 +142,14 @@ func cmdHelp(_ string, ctx *Context) Result {
 		{"/reset", "Clear terminal and reset conversation"},
 		{"/compact", "Summarize old messages to save context"},
 		{"/cost", "Show token usage and estimated cost"},
-		{"/session", "List saved sessions"},
+		{"/session [load <id>]", "List or load a saved session"},
 		{"/mode [exec|chat|agent]", "Show or switch mode"},
 		{"/model [provider/model]", "Show or switch model (use --save or /model save)"},
 		{"/yolo", "Toggle yolo mode (auto-execute agent tools)"},
 		{"/integrate", "Manage tool integrations (add/remove/list)"},
 		{"/skill", "List or remove agent-created skills"},
+		{"/agent [select <id>|clear]", "List, select, or clear agent profile"},
+		{"/goals", "List self-improvement goals"},
 		{"/memory", "Show vector memory stats"},
 		{"/diff", "Show git diff of working tree"},
 		{"/commit <message>", "Stage all and commit"},
@@ -177,7 +193,24 @@ func cmdCost(_ string, ctx *Context) Result {
 	return Result{Output: ctx.UsageTracker.Summary()}
 }
 
-func cmdSession(_ string, ctx *Context) Result {
+func cmdSession(args string, ctx *Context) Result {
+	args = strings.TrimSpace(args)
+
+	// /session load <id>
+	if strings.HasPrefix(args, "load ") {
+		id := strings.TrimSpace(args[5:])
+		if id == "" {
+			return Result{Output: "Usage: `/session load <id>`", IsError: true}
+		}
+		if ctx.LoadSessionFn == nil {
+			return Result{Output: "Session loading not available.", IsError: true}
+		}
+		if err := ctx.LoadSessionFn(id); err != nil {
+			return Result{Output: fmt.Sprintf("Error: %s", err), IsError: true}
+		}
+		return Result{Output: fmt.Sprintf("Session `%s` loaded. Continue the conversation.", id)}
+	}
+
 	if ctx.SessionList == nil {
 		return Result{Output: "Session listing not available.", IsError: true}
 	}
@@ -513,6 +546,97 @@ func cmdSkill(args string, ctx *Context) Result {
 		out += fmt.Sprintf("| `%s` | `%s` | %s | %s |\n", s.Name, s.ToolName(), s.Language, desc)
 	}
 	out += "\n**Remove:** `/skill remove <name>`"
+	return Result{Output: out}
+}
+
+func cmdAgent(args string, ctx *Context) Result {
+	args = strings.TrimSpace(args)
+
+	// /agent select <id>
+	if strings.HasPrefix(args, "select ") || strings.HasPrefix(args, "use ") {
+		parts := strings.SplitN(args, " ", 2)
+		id := strings.TrimSpace(parts[1])
+		if id == "" {
+			return Result{Output: "Usage: `/agent select <id>`", IsError: true}
+		}
+		if ctx.SetAgentProfile == nil {
+			return Result{Output: "Agent selection not available.", IsError: true}
+		}
+		if err := ctx.SetAgentProfile(id); err != nil {
+			return Result{Output: fmt.Sprintf("Error: %s", err), IsError: true}
+		}
+		return Result{Output: fmt.Sprintf("Agent profile `%s` activated. Agent will use this profile's system prompt and tools.", id)}
+	}
+
+	// /agent clear
+	if args == "clear" || args == "reset" {
+		if ctx.SetAgentProfile != nil {
+			ctx.SetAgentProfile("")
+		}
+		return Result{Output: "Agent profile cleared. Using default primary agent."}
+	}
+
+	// /agent (list)
+	if ctx.ListAgents == nil {
+		return Result{Output: "Agent listing not available.", IsError: true}
+	}
+	agents := ctx.ListAgents()
+	if len(agents) == 0 {
+		return Result{Output: "No agent profiles yet.\n\nIn agent mode, ask the AI to create one, or use the web GUI (`helm --gui`)."}
+	}
+
+	current := ""
+	if ctx.CurrentAgent != "" {
+		current = ctx.CurrentAgent
+	}
+
+	out := "**Agent Profiles**\n\n"
+	out += "| ID | Name | Tools | Active |\n"
+	out += "|---|---|---|---|\n"
+	for _, a := range agents {
+		tools := "all"
+		if len(a.Tools) > 0 {
+			tools = fmt.Sprintf("%d", len(a.Tools))
+		}
+		active := ""
+		if a.ID == current {
+			active = "**active**"
+		}
+		desc := a.Description
+		if len(desc) > 40 {
+			desc = desc[:37] + "..."
+		}
+		out += fmt.Sprintf("| `%s` | %s | %s | %s |\n", a.ID, a.Name, tools, active)
+	}
+	out += "\n**Select:** `/agent select <id>` | **Clear:** `/agent clear`"
+	return Result{Output: out}
+}
+
+func cmdGoals(_ string, ctx *Context) Result {
+	if ctx.ListGoals == nil {
+		return Result{Output: "Goals not available.", IsError: true}
+	}
+	goals := ctx.ListGoals()
+	if len(goals) == 0 {
+		return Result{Output: "No goals yet.\n\nStart the self-improvement loop from the web GUI (`helm --gui`), or ask the agent to create goals."}
+	}
+
+	out := "**Self-Improvement Goals**\n\n"
+	out += "| ID | Title | Status | Priority | Progress |\n"
+	out += "|---|---|---|---|---|\n"
+	for _, g := range goals {
+		progress := g.Progress
+		if len(progress) > 40 {
+			progress = progress[:37] + "..."
+		}
+		pri := "medium"
+		if g.Priority == 1 {
+			pri = "high"
+		} else if g.Priority >= 3 {
+			pri = "low"
+		}
+		out += fmt.Sprintf("| `%s` | %s | %s | %s | %s |\n", g.ID, g.Title, g.Status, pri, progress)
+	}
 	return Result{Output: out}
 }
 

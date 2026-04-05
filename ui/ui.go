@@ -8,9 +8,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/bearstonem/helm/agent"
 	"github.com/bearstonem/helm/ai"
 	"github.com/bearstonem/helm/command"
 	"github.com/bearstonem/helm/config"
+	"github.com/bearstonem/helm/goal"
 	"github.com/bearstonem/helm/history"
 	"github.com/bearstonem/helm/run"
 	"github.com/bearstonem/helm/session"
@@ -64,7 +66,8 @@ type UiState struct {
 	configBaseURL  string
 	// agent mode state
 	agentRunning         bool
-	agentApprovalPending bool
+	agentApprovalPending    bool
+	agentEscalationPending  bool
 	// setup flag
 	forceSetup bool
 	// remote SSH target
@@ -264,6 +267,20 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if u.state.integrating {
 				return u, u.handleIntegrateInput(u.components.prompt.GetValue())
+			}
+			if u.state.agentEscalationPending {
+				response := u.components.prompt.GetValue()
+				if response != "" {
+					u.state.agentEscalationPending = false
+					u.components.prompt.SetValue("")
+					u.components.prompt.SetPlaceholder(getPromptPlaceholder(u.state.promptMode))
+					u.components.prompt.Blur()
+					u.engine.RespondToEscalation(response)
+					return u, tea.Sequence(
+						tea.Println(fmt.Sprintf("  → %s", response)),
+						u.awaitAgentEvent(),
+					)
+				}
 			}
 			if !u.state.querying && !u.state.confirming && !u.state.agentRunning {
 				input := u.components.prompt.GetValue()
@@ -497,6 +514,45 @@ func (u *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return u, tea.Sequence(
 				tea.Println(u.components.renderer.RenderError(fmt.Sprintf("[agent error] %s", errStr))),
 				u.awaitAgentEvent(),
+			)
+		case ai.AgentEventSubAgentStart:
+			name := msg.AgentName
+			if name == "" {
+				name = msg.AgentID
+			}
+			output := u.components.renderer.RenderContent(fmt.Sprintf("🛸 **%s** started: %s", name, msg.Content))
+			return u, tea.Sequence(
+				tea.Println(output),
+				u.awaitAgentEvent(),
+			)
+		case ai.AgentEventSubAgentDone:
+			name := msg.AgentName
+			if name == "" {
+				name = msg.AgentID
+			}
+			output := u.components.renderer.RenderContent(fmt.Sprintf("✅ **%s** %s", name, msg.Content))
+			return u, tea.Sequence(
+				tea.Println(output),
+				u.awaitAgentEvent(),
+			)
+		case ai.AgentEventEscalation:
+			// Show the escalation question and switch to a prompt for the user to respond
+			name := msg.AgentName
+			if name == "" {
+				name = "Agent"
+			}
+			u.state.agentApprovalPending = false // not an approval, but similar flow
+			prompt := fmt.Sprintf("\n%s asks: %s\n\nType your response and press Enter:",
+				u.components.renderer.RenderWarning(name), msg.Content)
+			u.state.buffer = prompt
+			u.state.confirming = false
+			u.state.executing = false
+			u.components.prompt.Focus()
+			u.components.prompt.SetPlaceholder("Your response...")
+			u.state.agentEscalationPending = true
+			return u, tea.Sequence(
+				tea.Println(prompt),
+				textarea.Blink,
 			)
 		case ai.AgentEventDone:
 			u.state.agentRunning = false
@@ -1360,6 +1416,29 @@ func (u *Ui) buildCommandContext() *command.Context {
 			u.reloadIntegrations()
 		}
 		ctx.MemoryStore = u.engine.GetMemoryStore()
+		ctx.LoadSessionFn = func(id string) error {
+			return u.engine.LoadSession(u.config.GetSystemConfig().GetHomeDirectory(), id)
+		}
+		ctx.SetAgentProfile = func(id string) error {
+			if id == "" {
+				u.engine.SetAgentProfile(nil)
+				return nil
+			}
+			p, err := agent.Load(u.config.GetSystemConfig().GetHomeDirectory(), id)
+			if err != nil {
+				return err
+			}
+			u.engine.SetAgentProfile(p)
+			return nil
+		}
+		ctx.ListAgents = func() []agent.Profile {
+			agents, _ := agent.LoadAll(u.config.GetSystemConfig().GetHomeDirectory())
+			return agents
+		}
+		ctx.ListGoals = func() []goal.Goal {
+			goals, _ := goal.LoadAll(u.config.GetSystemConfig().GetHomeDirectory())
+			return goals
+		}
 	}
 	ctx.SessionList = func() []session.SessionInfo {
 		return u.listSessions()
