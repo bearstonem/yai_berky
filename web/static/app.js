@@ -190,6 +190,14 @@ function sendChat() {
   const message = input.value.trim();
   if (!message || chatStreaming) return;
 
+  // Handle slash commands
+  if (message === '/new') {
+    input.value = '';
+    autoResize(input);
+    newChat();
+    return;
+  }
+
   addMessage('chat-messages', message, 'user');
   input.value = '';
   autoResize(input);
@@ -443,6 +451,13 @@ function sendAgent() {
   const input = document.getElementById('agent-input');
   const message = input.value.trim();
   if (!message || agentRunning) return;
+
+  if (message === '/new') {
+    input.value = '';
+    autoResize(input);
+    newAgentTask();
+    return;
+  }
 
   addMessage('agent-messages', message, 'user');
   input.value = '';
