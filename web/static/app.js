@@ -1097,6 +1097,7 @@ async function loadAgentsList() {
       <div class="card-desc">${escapeHtml(a.description || 'No description')}</div>
       <div class="card-desc" style="font-size:12px;color:var(--text-dimmer);max-height:60px;overflow:hidden">${escapeHtml(truncate(a.system_prompt || '', 200))}</div>
       <div class="card-actions">
+        <button class="card-btn" onclick="chatWithAgent('${escapeHtml(a.id)}')">Chat</button>
         <button class="card-btn" onclick="editAgent('${escapeHtml(a.id)}')">Edit</button>
         <button class="card-btn danger" onclick="deleteAgent('${escapeHtml(a.id)}')">Delete</button>
       </div>
@@ -1203,6 +1204,16 @@ async function deleteAgent(id) {
   if (!confirm('Delete this agent?')) return;
   await fetch(API + '/api/agents/' + id, { method: 'DELETE' });
   loadAgentsList();
+}
+
+function chatWithAgent(id) {
+  switchPage('agent');
+  // Wait for profiles to load, then select the agent
+  loadAgentProfiles().then(() => {
+    const select = document.getElementById('agent-profile-select');
+    select.value = id;
+    onAgentProfileChange();
+  });
 }
 
 // --- Agent Profile Selector (on Agent run page) ---
