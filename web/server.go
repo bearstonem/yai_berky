@@ -1185,10 +1185,13 @@ func (s *Server) runSelfImproveCycle(ctx context.Context) {
 	directive := s.selfImproveDirective
 	s.mu.Unlock()
 	if directive != "" {
-		prompt = "# PRIME DIRECTIVE\n" +
-			"Your overriding mission is: " + directive + "\n" +
-			"All self-improvement activities MUST align with this directive. " +
-			"Every goal you create, skill you build, and agent you spawn should serve this purpose.\n\n" +
+		prompt = "# PRIME DIRECTIVE — OVERRIDES ALL GOALS\n" +
+			"Your overriding mission is: " + directive + "\n\n" +
+			"This directive takes ABSOLUTE PRIORITY over any existing goals.\n" +
+			"- Review your existing goals with `list_goals`. If any conflict with this directive, update them to align.\n" +
+			"- Create new goals that serve this directive if none exist.\n" +
+			"- Every skill you build, agent you create, and action you take MUST advance this mission.\n" +
+			"- If existing goals are irrelevant to this directive, mark them as `paused` and create aligned ones.\n\n" +
 			prompt
 	} else {
 		prompt = "# AUTONOMOUS MODE\n" +

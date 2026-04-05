@@ -1957,13 +1957,26 @@ function loadPrimeDirective() {
   return saved;
 }
 
+function saveInterval() {
+  const val = parseInt(document.getElementById('si-interval-input').value) || 5;
+  localStorage.setItem('helm-evolve-interval', val);
+}
+
+function loadInterval() {
+  const saved = parseInt(localStorage.getItem('helm-evolve-interval')) || 5;
+  const input = document.getElementById('si-interval-input');
+  if (input) input.value = saved;
+  return saved;
+}
+
 async function startSelfImprove() {
   const directive = loadPrimeDirective();
+  const interval = loadInterval();
   try {
     const res = await fetch(API + '/api/self-improve/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ interval_minutes: 5, prime_directive: directive })
+      body: JSON.stringify({ interval_minutes: interval, prime_directive: directive })
     });
     if (!res.ok) {
       const err = await res.json();
@@ -1981,6 +1994,7 @@ async function startSelfImprove() {
   document.getElementById('self-improve-panel').classList.remove('hidden');
   document.getElementById('si-log').innerHTML = '';
   loadPrimeDirective();
+  loadInterval();
 
   loadSelfImproveGoals();
   connectSelfImproveStream();
@@ -2148,6 +2162,7 @@ async function checkSelfImproveStatus() {
       document.getElementById('self-improve-panel').classList.remove('hidden');
       document.getElementById('si-cycle-badge').textContent = 'Cycle ' + status.cycle;
       loadPrimeDirective();
+      loadInterval();
       loadSelfImproveGoals();
       connectSelfImproveStream();
     }
@@ -2223,6 +2238,8 @@ function applyThemeIcons(themeId) {
 // --- Init ---
 
 loadSavedTheme();
+loadPrimeDirective();
+loadInterval();
 loadMemoryStats();
 loadConfig().catch(() => {});
 checkSelfImproveStatus();
