@@ -16,11 +16,11 @@ func setupTestDir(t *testing.T) string {
 }
 
 func TestSanitizeID(t *testing.T) {
-	assert.Equal(t, "hello_world", sanitizeID("Hello World"))
-	assert.Equal(t, "test-agent", sanitizeID("Test-Agent"))
-	assert.Equal(t, "agent_123", sanitizeID("agent 123"))
-	assert.Equal(t, "", sanitizeID("   "))
-	assert.Equal(t, "abc", sanitizeID("a!@#b$%^c"))
+	assert.Equal(t, "hello_world", SanitizeID("Hello World"))
+	assert.Equal(t, "test-agent", SanitizeID("Test-Agent"))
+	assert.Equal(t, "agent_123", SanitizeID("agent 123"))
+	assert.Equal(t, "", SanitizeID("   "))
+	assert.Equal(t, "abc", SanitizeID("a!@#b$%^c"))
 }
 
 func TestSaveAndLoad(t *testing.T) {

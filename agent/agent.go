@@ -80,7 +80,7 @@ func Save(homeDir string, a *Profile) error {
 	}
 
 	if a.ID == "" {
-		a.ID = sanitizeID(a.Name)
+		a.ID = SanitizeID(a.Name)
 	}
 	if a.ID == "" {
 		return fmt.Errorf("agent must have a name")
@@ -109,7 +109,8 @@ func Delete(homeDir, id string) error {
 	return os.Remove(path)
 }
 
-func sanitizeID(name string) string {
+// SanitizeID converts a name to a filesystem-safe agent ID.
+func SanitizeID(name string) string {
 	name = strings.ToLower(strings.TrimSpace(name))
 	name = strings.ReplaceAll(name, " ", "_")
 	var b strings.Builder

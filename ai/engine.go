@@ -984,7 +984,9 @@ func (e *Engine) agentTools() []Tool {
 	return tools
 }
 
-// executeCreateAgent creates a new persistent sub-agent profile.
+// executeCreateAgent creates or updates a persistent sub-agent profile.
+// If an agent with the same name already exists, it is updated in place
+// while preserving its CreatedAt timestamp.
 func (e *Engine) executeCreateAgent(name, description, systemPrompt string, tools []string) (string, error) {
 	p := &agent.Profile{
 		Name:         name,
@@ -992,6 +994,13 @@ func (e *Engine) executeCreateAgent(name, description, systemPrompt string, tool
 		SystemPrompt: systemPrompt,
 		Tools:        tools,
 	}
+
+	// Preserve CreatedAt if updating an existing agent
+	id := agent.SanitizeID(name)
+	if existing, err := agent.Load(e.homeDir, id); err == nil {
+		p.CreatedAt = existing.CreatedAt
+	}
+
 	if err := agent.Save(e.homeDir, p); err != nil {
 		return "", err
 	}
