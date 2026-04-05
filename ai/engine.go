@@ -1026,10 +1026,11 @@ func (e *Engine) executeDelegation(agentID, task, sharedContext string) (string,
 		subEngine.appendAgentMessage(Message{Role: "assistant", Content: "Understood. I have the shared context. Proceeding with the task."})
 	}
 
-	// Run sub-agent in background
+	// Run sub-agent in background; close channel when done so forwarding loop exits
 	done := make(chan error, 1)
 	go func() {
 		done <- subEngine.AgentCompletion(task, true)
+		close(subEngine.agentChannel)
 	}()
 
 	// Forward sub-agent events to parent channel, tagged with agent identity

@@ -564,6 +564,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			sseEvent(w, flusher, "content", output.GetContent())
 		}
 		if output.IsLast() {
+			engine.SaveSession(s.homeDir)
 			sseEvent(w, flusher, "done", "")
 			return
 		}
@@ -714,6 +715,8 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 			})
 			sseEvent(w, flusher, "escalation", string(data))
 		case ai.AgentEventDone:
+			// Save session to disk
+			engine.SaveSession(s.homeDir)
 			sseEvent(w, flusher, "done", "")
 			return
 		}
