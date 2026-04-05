@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/bearstonem/helm/cron"
 	"github.com/bearstonem/helm/agent"
 	"github.com/bearstonem/helm/backup"
 	"github.com/bearstonem/helm/ai"
@@ -28,6 +29,11 @@ import (
 	"github.com/bearstonem/helm/skill"
 	"github.com/spf13/viper"
 )
+
+type cronEvent struct {
+	Type string // "thinking", "tool_call", "answer", "error", "done"
+	Data string
+}
 
 //go:embed static/*
 var staticFiles embed.FS
@@ -48,17 +54,22 @@ type Server struct {
 	selfImproveChan     chan ai.AgentEvent
 	selfImproveInterval  time.Duration
 	selfImproveDirective string // user's prime directive
+	cronScheduler        *cron.Scheduler
+	cronEventChans       map[string][]chan cronEvent // job ID → listeners
 }
 
 // NewServer creates a new web server.
 func NewServer(cfg *config.Config, engine *ai.Engine, homeDir string, sourceDir string, port int) *Server {
-	return &Server{
-		homeDir:   homeDir,
-		sourceDir: sourceDir,
-		config:    cfg,
-		engine:    engine,
-		addr:      fmt.Sprintf("127.0.0.1:%d", port),
+	s := &Server{
+		homeDir:        homeDir,
+		sourceDir:      sourceDir,
+		config:         cfg,
+		engine:         engine,
+		addr:           fmt.Sprintf("127.0.0.1:%d", port),
+		cronEventChans: make(map[string][]chan cronEvent),
 	}
+	s.cronScheduler = cron.NewScheduler(homeDir, s.executeCronJob)
+	return s
 }
 
 // Start launches the HTTP server and opens the browser.
@@ -67,6 +78,9 @@ func (s *Server) Start() error {
 	if braveKey := viper.GetString("BRAVE_API_KEY"); braveKey != "" && os.Getenv("BRAVE_API_KEY") == "" {
 		os.Setenv("BRAVE_API_KEY", braveKey)
 	}
+
+	// Start cron scheduler
+	s.cronScheduler.Start()
 
 	mux := http.NewServeMux()
 
@@ -93,6 +107,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/self-improve/status", s.corsWrap(s.handleSelfImproveStatus))
 	mux.HandleFunc("/api/self-improve/stream", s.corsWrap(s.handleSelfImproveStream))
 	mux.HandleFunc("/api/self-improve/reviews", s.corsWrap(s.handleEvolutionReviews))
+	mux.HandleFunc("/api/cron", s.corsWrap(s.handleCronJobs))
+	mux.HandleFunc("/api/cron/", s.corsWrap(s.handleCronJobByID))
+	mux.HandleFunc("/api/cron/scheduler", s.corsWrap(s.handleCronScheduler))
+	mux.HandleFunc("/api/cron/stream/", s.corsWrap(s.handleCronStream))
 
 	// Static files
 	staticFS, err := fs.Sub(staticFiles, "static")
@@ -952,6 +970,268 @@ func (s *Server) handleGoalByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.jsonError(w, "method not allowed", 405)
 	}
+}
+
+// --- Cron Jobs ---
+
+func (s *Server) handleCronJobs(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		jobs, err := cron.LoadAll(s.homeDir)
+		if err != nil {
+			s.jsonError(w, err.Error(), 500)
+			return
+		}
+		if jobs == nil {
+			jobs = []cron.Job{}
+		}
+		s.jsonResponse(w, jobs)
+
+	case "POST":
+		var req struct {
+			Name        string `json:"name"`
+			Schedule    string `json:"schedule"`
+			Instruction string `json:"instruction"`
+			AgentID     string `json:"agent_id"`
+			Enabled     bool   `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			s.jsonError(w, "invalid JSON: "+err.Error(), 400)
+			return
+		}
+		if req.Name == "" || req.Schedule == "" || req.Instruction == "" {
+			s.jsonError(w, "name, schedule, and instruction are required", 400)
+			return
+		}
+		// Validate schedule
+		if _, err := cron.NextRun(req.Schedule, time.Now()); err != nil {
+			s.jsonError(w, "invalid schedule: "+err.Error(), 400)
+			return
+		}
+		j := &cron.Job{
+			Name:        req.Name,
+			Schedule:    req.Schedule,
+			Instruction: req.Instruction,
+			AgentID:     req.AgentID,
+			Output:      cron.ChannelChat,
+			Enabled:     req.Enabled,
+		}
+		if err := cron.Save(s.homeDir, j); err != nil {
+			s.jsonError(w, err.Error(), 500)
+			return
+		}
+		w.WriteHeader(201)
+		s.jsonResponse(w, j)
+
+	default:
+		s.jsonError(w, "method not allowed", 405)
+	}
+}
+
+func (s *Server) handleCronJobByID(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Path[len("/api/cron/"):]
+	if id == "" || strings.Contains(id, "/") {
+		s.jsonError(w, "missing job ID", 400)
+		return
+	}
+
+	switch r.Method {
+	case "GET":
+		j, err := cron.Load(s.homeDir, id)
+		if err != nil {
+			s.jsonError(w, err.Error(), 404)
+			return
+		}
+		s.jsonResponse(w, j)
+
+	case "PUT":
+		var req struct {
+			Name        string `json:"name"`
+			Schedule    string `json:"schedule"`
+			Instruction string `json:"instruction"`
+			AgentID     string `json:"agent_id"`
+			Enabled     *bool  `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			s.jsonError(w, "invalid JSON: "+err.Error(), 400)
+			return
+		}
+		existing, err := cron.Load(s.homeDir, id)
+		if err != nil {
+			s.jsonError(w, err.Error(), 404)
+			return
+		}
+		if req.Name != "" {
+			existing.Name = req.Name
+		}
+		if req.Schedule != "" {
+			if _, err := cron.NextRun(req.Schedule, time.Now()); err != nil {
+				s.jsonError(w, "invalid schedule: "+err.Error(), 400)
+				return
+			}
+			existing.Schedule = req.Schedule
+		}
+		if req.Instruction != "" {
+			existing.Instruction = req.Instruction
+		}
+		if req.AgentID != "" {
+			existing.AgentID = req.AgentID
+		}
+		if req.Enabled != nil {
+			existing.Enabled = *req.Enabled
+		}
+		if err := cron.Save(s.homeDir, existing); err != nil {
+			s.jsonError(w, err.Error(), 500)
+			return
+		}
+		s.jsonResponse(w, existing)
+
+	case "DELETE":
+		if err := cron.Delete(s.homeDir, id); err != nil {
+			s.jsonError(w, err.Error(), 404)
+			return
+		}
+		s.jsonResponse(w, map[string]string{"status": "deleted"})
+
+	default:
+		s.jsonError(w, "method not allowed", 405)
+	}
+}
+
+func (s *Server) handleCronScheduler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		s.jsonResponse(w, map[string]bool{"running": s.cronScheduler.IsRunning()})
+	case "POST":
+		var req struct {
+			Action string `json:"action"` // "start" or "stop"
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			s.jsonError(w, "invalid JSON: "+err.Error(), 400)
+			return
+		}
+		switch req.Action {
+		case "start":
+			s.cronScheduler.Start()
+		case "stop":
+			s.cronScheduler.Stop()
+		default:
+			s.jsonError(w, "action must be 'start' or 'stop'", 400)
+			return
+		}
+		s.jsonResponse(w, map[string]string{"status": "ok"})
+	default:
+		s.jsonError(w, "method not allowed", 405)
+	}
+}
+
+// handleCronStream provides SSE stream for a running cron job.
+func (s *Server) handleCronStream(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Path[len("/api/cron/stream/"):]
+	if id == "" {
+		s.jsonError(w, "missing job ID", 400)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		s.jsonError(w, "streaming not supported", 500)
+		return
+	}
+
+	ch := make(chan cronEvent, 64)
+	s.mu.Lock()
+	s.cronEventChans[id] = append(s.cronEventChans[id], ch)
+	s.mu.Unlock()
+
+	ctx := r.Context()
+	defer func() {
+		s.mu.Lock()
+		chans := s.cronEventChans[id]
+		for i, c := range chans {
+			if c == ch {
+				s.cronEventChans[id] = append(chans[:i], chans[i+1:]...)
+				break
+			}
+		}
+		s.mu.Unlock()
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case evt, ok := <-ch:
+			if !ok {
+				sseEvent(w, flusher, "done", "")
+				return
+			}
+			sseEvent(w, flusher, evt.Type, evt.Data)
+		}
+	}
+}
+
+func (s *Server) broadcastCronEvent(jobID string, evt cronEvent) {
+	s.mu.Lock()
+	chans := s.cronEventChans[jobID]
+	s.mu.Unlock()
+	for _, ch := range chans {
+		select {
+		case ch <- evt:
+		default:
+		}
+	}
+}
+
+// executeCronJob is called by the scheduler when a job fires.
+func (s *Server) executeCronJob(job cron.Job) {
+	cron.UpdateStatus(s.homeDir, job.ID, "running")
+	s.broadcastCronEvent(job.ID, cronEvent{Type: "thinking", Data: fmt.Sprintf("Cron job %q started", job.Name)})
+
+	engine, err := ai.NewEngine(ai.AgentEngineMode, s.config)
+	if err != nil {
+		cron.UpdateStatus(s.homeDir, job.ID, "error")
+		s.broadcastCronEvent(job.ID, cronEvent{Type: "error", Data: err.Error()})
+		return
+	}
+	engine.StartNewSession()
+
+	done := make(chan struct{})
+	go func() {
+		engine.AgentCompletion(job.Instruction, true)
+		close(engine.GetAgentChannel())
+		close(done)
+	}()
+
+	agentCh := engine.GetAgentChannel()
+	for event := range agentCh {
+		evtType := "thinking"
+		switch event.Type {
+		case ai.AgentEventThinking:
+			evtType = "thinking"
+		case ai.AgentEventToolCall:
+			evtType = "tool_call"
+		case ai.AgentEventToolResult:
+			evtType = "tool_result"
+		case ai.AgentEventAnswer:
+			evtType = "answer"
+		case ai.AgentEventError:
+			evtType = "error"
+		}
+		data := event.Content
+		if event.Error != nil {
+			data = event.Error.Error()
+		}
+		s.broadcastCronEvent(job.ID, cronEvent{Type: evtType, Data: data})
+	}
+
+	<-done
+	engine.SaveSession(s.homeDir)
+	cron.UpdateStatus(s.homeDir, job.ID, "success")
+	s.broadcastCronEvent(job.ID, cronEvent{Type: "done", Data: ""})
 }
 
 // --- Self-Improvement Loop ---

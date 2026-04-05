@@ -28,6 +28,7 @@ function switchPage(page) {
   if (page === 'agents') loadAgentsList();
   if (page === 'agent') loadAgentProfiles();
   if (page === 'evolution') { loadEvolutionReviews(); loadSelfImproveGoals(); }
+  if (page === 'cron') loadCronJobs();
 }
 
 // --- New chat / new task ---
@@ -1992,6 +1993,210 @@ async function editBuilderResult() {
   }
 }
 
+// --- Cron Jobs ---
+
+let allCronJobs = [];
+
+async function loadCronJobs() {
+  const [jobsRes, agentsRes, schedRes] = await Promise.all([
+    fetch(API + '/api/cron'),
+    fetch(API + '/api/agents'),
+    fetch(API + '/api/cron/scheduler'),
+  ]);
+  allCronJobs = await jobsRes.json();
+  const agents = await agentsRes.json();
+  const schedStatus = await schedRes.json();
+
+  // Populate agent dropdown in modal
+  const agentSelect = document.getElementById('cron-agent');
+  agentSelect.innerHTML = '<option value="">Primary Agent</option>' +
+    agents.map(a => '<option value="' + escapeHtml(a.id) + '">' + escapeHtml(a.name) + '</option>').join('');
+
+  // Scheduler status
+  const statusEl = document.getElementById('cron-scheduler-status');
+  statusEl.innerHTML = '<span class="badge" style="background:' +
+    (schedStatus.running ? 'var(--accent)' : '#c33') + ';color:#000;padding:4px 10px;border-radius:4px">' +
+    (schedStatus.running ? 'Scheduler Running' : 'Scheduler Stopped') + '</span> ' +
+    '<button class="card-btn" onclick="toggleCronScheduler(' + !schedStatus.running + ')" style="margin-left:8px">' +
+    (schedStatus.running ? 'Stop' : 'Start') + '</button>';
+
+  renderCronJobs(agents);
+}
+
+function renderCronJobs(agents) {
+  const container = document.getElementById('cron-list');
+  if (allCronJobs.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x23F0;</div>' +
+      '<p>No cron jobs yet. Create one to schedule recurring agent tasks.</p></div>';
+    return;
+  }
+
+  const agentMap = {};
+  if (agents) agents.forEach(a => agentMap[a.id] = a.name);
+
+  container.innerHTML = allCronJobs.map(j => {
+    const agentName = j.agent_id ? (agentMap[j.agent_id] || j.agent_id) : 'Primary Agent';
+    const statusColor = j.last_status === 'success' ? 'var(--accent)' :
+      j.last_status === 'error' ? '#c33' :
+      j.last_status === 'running' ? '#fa0' : 'var(--border)';
+    const lastRun = j.last_run_at ? new Date(j.last_run_at).toLocaleString() : 'never';
+    return '<div class="card">' +
+      '<div class="card-title">' +
+        '<span>' + escapeHtml(j.name) + '</span>' +
+        '<span class="badge badge-lang">' + escapeHtml(j.schedule) + '</span>' +
+        (j.enabled
+          ? '<span class="badge" style="background:var(--accent);color:#000">enabled</span>'
+          : '<span class="badge" style="background:#666;color:#fff">disabled</span>') +
+      '</div>' +
+      '<div class="card-meta">Agent: ' + escapeHtml(agentName) +
+        ' &middot; Last run: ' + escapeHtml(lastRun) +
+        ' &middot; <span style="color:' + statusColor + '">' + escapeHtml(j.last_status || 'pending') + '</span></div>' +
+      '<div class="card-desc">' + escapeHtml(j.instruction.substring(0, 200)) + (j.instruction.length > 200 ? '...' : '') + '</div>' +
+      '<div class="card-actions">' +
+        '<button class="card-btn" onclick="editCronJob(\'' + escapeHtml(j.id) + '\')">Edit</button>' +
+        '<button class="card-btn" onclick="toggleCronJob(\'' + escapeHtml(j.id) + '\',' + !j.enabled + ')">' + (j.enabled ? 'Disable' : 'Enable') + '</button>' +
+        '<button class="card-btn" onclick="watchCronJob(\'' + escapeHtml(j.id) + '\',\'' + escapeHtml(j.name) + '\')">Watch</button>' +
+        '<button class="card-btn danger" onclick="deleteCronJob(\'' + escapeHtml(j.id) + '\')">Delete</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function showCreateCronJob() {
+  document.getElementById('cron-modal-title').textContent = 'Create Cron Job';
+  document.getElementById('cron-save-btn').textContent = 'Create';
+  document.getElementById('cron-edit-id').value = '';
+  document.getElementById('cron-name').value = '';
+  document.getElementById('cron-schedule').value = '';
+  document.getElementById('cron-instruction').value = '';
+  document.getElementById('cron-agent').value = '';
+  document.getElementById('cron-enabled').value = 'true';
+  document.getElementById('cron-modal').classList.remove('hidden');
+}
+
+function closeCronModal() {
+  document.getElementById('cron-modal').classList.add('hidden');
+}
+
+async function editCronJob(id) {
+  const res = await fetch(API + '/api/cron/' + encodeURIComponent(id));
+  if (!res.ok) return;
+  const j = await res.json();
+
+  document.getElementById('cron-modal-title').textContent = 'Edit Cron Job';
+  document.getElementById('cron-save-btn').textContent = 'Save';
+  document.getElementById('cron-edit-id').value = j.id;
+  document.getElementById('cron-name').value = j.name;
+  document.getElementById('cron-schedule').value = j.schedule;
+  document.getElementById('cron-instruction').value = j.instruction;
+  document.getElementById('cron-agent').value = j.agent_id || '';
+  document.getElementById('cron-enabled').value = j.enabled ? 'true' : 'false';
+  document.getElementById('cron-modal').classList.remove('hidden');
+}
+
+async function saveCronJob() {
+  const editId = document.getElementById('cron-edit-id').value;
+  const body = {
+    name: document.getElementById('cron-name').value,
+    schedule: document.getElementById('cron-schedule').value,
+    instruction: document.getElementById('cron-instruction').value,
+    agent_id: document.getElementById('cron-agent').value,
+    enabled: document.getElementById('cron-enabled').value === 'true',
+  };
+
+  let res;
+  if (editId) {
+    res = await fetch(API + '/api/cron/' + encodeURIComponent(editId), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+  } else {
+    res = await fetch(API + '/api/cron', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+  }
+
+  if (res.ok) {
+    closeCronModal();
+    loadCronJobs();
+  } else {
+    const err = await res.json();
+    alert('Error: ' + (err.error || 'Unknown error'));
+  }
+}
+
+async function deleteCronJob(id) {
+  if (!confirm('Delete this cron job?')) return;
+  const res = await fetch(API + '/api/cron/' + encodeURIComponent(id), { method: 'DELETE' });
+  if (res.ok) loadCronJobs();
+}
+
+async function toggleCronJob(id, enabled) {
+  await fetch(API + '/api/cron/' + encodeURIComponent(id), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled })
+  });
+  loadCronJobs();
+}
+
+async function toggleCronScheduler(start) {
+  await fetch(API + '/api/cron/scheduler', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: start ? 'start' : 'stop' })
+  });
+  loadCronJobs();
+}
+
+function watchCronJob(id, name) {
+  const panel = document.getElementById('cron-output-panel');
+  const log = document.getElementById('cron-output-log');
+  const title = document.getElementById('cron-output-title');
+
+  panel.classList.remove('hidden');
+  title.textContent = 'Output: ' + name;
+  log.innerHTML = '<div class="msg msg-system">Watching for output from job "' + escapeHtml(name) + '"...</div>';
+
+  // Close any existing EventSource
+  if (window._cronSSE) { window._cronSSE.close(); window._cronSSE = null; }
+
+  const evtSource = new EventSource(API + '/api/cron/stream/' + encodeURIComponent(id));
+  window._cronSSE = evtSource;
+
+  evtSource.addEventListener('thinking', function(e) {
+    addMessageTo(log, e.data, 'system');
+  });
+  evtSource.addEventListener('tool_call', function(e) {
+    addMessageTo(log, e.data, 'system');
+  });
+  evtSource.addEventListener('tool_result', function(e) {
+    addMessageTo(log, e.data, 'system');
+  });
+  evtSource.addEventListener('answer', function(e) {
+    addMessageTo(log, e.data, 'assistant');
+  });
+  evtSource.addEventListener('error', function(e) {
+    if (e.data) addMessageTo(log, e.data, 'error');
+  });
+  evtSource.addEventListener('done', function() {
+    addMessageTo(log, 'Job completed.', 'system');
+    loadCronJobs();
+  });
+
+  evtSource.onerror = function() {
+    // SSE reconnect is automatic, suppress noise
+  };
+}
+
+function closeCronOutput() {
+  document.getElementById('cron-output-panel').classList.add('hidden');
+  if (window._cronSSE) { window._cronSSE.close(); window._cronSSE = null; }
+}
+
 // --- Self-Improvement Loop ---
 
 let selfImproveRunning = false;
@@ -2284,13 +2489,13 @@ async function dismissReview(filename) {
 // --- Themes ---
 
 const THEME_ICONS = {
-  '':            { logo: '✦', chat: '📡', agent: '🖖', agents: '🛸', skills: '⚡', evolution: '🔄', sessions: '📋', settings: '⚙️' },
-  'matrix':      { logo: '⌬', chat: '▶',  agent: '◉',  agents: '◈',  skills: '⚙',  evolution: '⟳',  sessions: '▤',  settings: '⌘'  },
-  'netrunner':   { logo: '◇', chat: '⟐',  agent: '⬡',  agents: '⬢',  skills: '⚡', evolution: '⥁',  sessions: '▥',  settings: '⚙'  },
-  'snowcrash':   { logo: '☣', chat: '⌁',  agent: '⍟',  agents: '⎊',  skills: '⚒',  evolution: '⟳',  sessions: '⏣',  settings: '⚙'  },
-  'neuromancer': { logo: '◈', chat: '⌖',  agent: '⍾',  agents: '⎈',  skills: '⚛',  evolution: '⥁',  sessions: '☰',  settings: '⚙'  },
-  'bladerunner': { logo: '▲', chat: '◌',  agent: '◎',  agents: '⊛',  skills: '⚡', evolution: '⟳',  sessions: '≡',  settings: '⚙'  },
-  'lcars':       { logo: '◆', chat: '▸',  agent: '●',  agents: '◐',  skills: '◇',  evolution: '◑',  sessions: '▪',  settings: '■'  },
+  '':            { logo: '✦', chat: '📡', agent: '🖖', agents: '🛸', skills: '⚡', cron: '⏰', evolution: '🔄', sessions: '📋', settings: '⚙️' },
+  'matrix':      { logo: '⌬', chat: '▶',  agent: '◉',  agents: '◈',  skills: '⚙',  cron: '⊙',  evolution: '⟳',  sessions: '▤',  settings: '⌘'  },
+  'netrunner':   { logo: '◇', chat: '⟐',  agent: '⬡',  agents: '⬢',  skills: '⚡', cron: '⊘',  evolution: '⥁',  sessions: '▥',  settings: '⚙'  },
+  'snowcrash':   { logo: '☣', chat: '⌁',  agent: '⍟',  agents: '⎊',  skills: '⚒',  cron: '⌛', evolution: '⟳',  sessions: '⏣',  settings: '⚙'  },
+  'neuromancer': { logo: '◈', chat: '⌖',  agent: '⍾',  agents: '⎈',  skills: '⚛',  cron: '⊛',  evolution: '⥁',  sessions: '☰',  settings: '⚙'  },
+  'bladerunner': { logo: '▲', chat: '◌',  agent: '◎',  agents: '⊛',  skills: '⚡', cron: '◉',  evolution: '⟳',  sessions: '≡',  settings: '⚙'  },
+  'lcars':       { logo: '◆', chat: '▸',  agent: '●',  agents: '◐',  skills: '◇',  cron: '◈',  evolution: '◑',  sessions: '▪',  settings: '■'  },
 };
 
 const THEMES = [

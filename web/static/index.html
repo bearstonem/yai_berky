@@ -30,6 +30,9 @@
       <button class="nav-btn" data-page="sessions" onclick="switchPage('sessions')">
         <span class="nav-icon" data-icon="sessions">&#x1F4CB;</span> Sessions
       </button>
+      <button class="nav-btn" data-page="cron" onclick="switchPage('cron')">
+        <span class="nav-icon" data-icon="cron">&#x23F0;</span> Cron Jobs
+      </button>
       <button class="nav-btn" data-page="evolution" onclick="switchPage('evolution')">
         <span class="nav-icon" data-icon="evolution">&#x1F504;</span> Evolution
       </button>
@@ -235,6 +238,74 @@
     </div>
 
     <!-- Evolution Page -->
+    <!-- Cron Jobs Page -->
+    <div id="page-cron" class="page">
+      <div class="page-header">
+        <h1>Cron Jobs</h1>
+        <span class="page-desc">Schedule recurring agent tasks</span>
+        <button class="action-btn" onclick="showCreateCronJob()">+ New Job</button>
+      </div>
+      <div id="cron-scheduler-status" style="margin-bottom:12px"></div>
+      <div id="cron-list" class="card-grid"></div>
+
+      <!-- Cron job output panel -->
+      <div id="cron-output-panel" class="hidden" style="margin-top:16px;border:1px solid var(--border);border-radius:8px;padding:12px;max-height:400px;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <strong id="cron-output-title">Job Output</strong>
+          <button class="cancel-btn" onclick="closeCronOutput()" style="font-size:0.8em">Close</button>
+        </div>
+        <div id="cron-output-log" class="chat-log" style="font-size:0.85em"></div>
+      </div>
+
+      <!-- Create/edit cron job modal -->
+      <div id="cron-modal" class="modal hidden">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2 id="cron-modal-title">Create Cron Job</h2>
+            <button class="modal-close" onclick="closeCronModal()">&times;</button>
+          </div>
+          <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="cron-name" placeholder="e.g. daily-report">
+          </div>
+          <div class="form-group">
+            <label>Schedule</label>
+            <input type="text" id="cron-schedule" placeholder="*/5 * * * * or @every 10m or @hourly">
+            <p class="form-hint">Standard cron (min hr dom mon dow) or @every 5m, @hourly, @daily, @weekly</p>
+          </div>
+          <div class="form-group">
+            <label>Agent</label>
+            <select id="cron-agent">
+              <option value="">Primary Agent</option>
+            </select>
+          </div>
+          <div class="form-group full-width">
+            <label>Instruction</label>
+            <textarea id="cron-instruction" rows="6" placeholder="What should the agent do each time this job runs?"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Output Channel</label>
+            <select id="cron-output-channel" disabled>
+              <option value="chat">Agent Chat Window</option>
+            </select>
+            <p class="form-hint">More channels coming soon</p>
+          </div>
+          <div class="form-group">
+            <label>Enabled</label>
+            <select id="cron-enabled">
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+          <input type="hidden" id="cron-edit-id" value="">
+          <div class="modal-actions">
+            <button class="action-btn" id="cron-save-btn" onclick="saveCronJob()">Create</button>
+            <button class="cancel-btn" onclick="closeCronModal()">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="page-evolution" class="page">
       <div class="agent-toolbar">
         <div class="toolbar-left">
