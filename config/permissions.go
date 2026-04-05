@@ -53,6 +53,7 @@ const (
 
 // ToolPermissions maps tool names to their required permission level.
 var ToolPermissions = map[string]ToolPermission{
+	"web_search":      ToolPermRead,
 	"read_file":      ToolPermRead,
 	"list_directory":  ToolPermRead,
 	"search_files":    ToolPermRead,
@@ -74,9 +75,25 @@ func IsToolAllowed(toolName string, mode PermissionMode) bool {
 		if len(toolName) > 6 && toolName[:6] == "skill_" {
 			return mode >= PermWorkspaceWrite
 		}
+		// Agent-as-tool calls are allowed in workspace-write mode.
+		if len(toolName) > 6 && toolName[:6] == "agent_" {
+			return mode >= PermWorkspaceWrite
+		}
 		// Skill management tools
 		if toolName == "create_skill" || toolName == "list_skills" || toolName == "remove_skill" {
 			return mode >= PermWorkspaceWrite
+		}
+		// Agent management, delegation, and escalation tools
+		if toolName == "create_agent" || toolName == "delegate_task" || toolName == "escalate_to_user" {
+			return mode >= PermWorkspaceWrite
+		}
+		// Goal management tools
+		if toolName == "list_goals" || toolName == "create_goal" || toolName == "update_goal" {
+			return mode >= PermWorkspaceWrite
+		}
+		// Restart requires full access (it kills the process)
+		if toolName == "restart_helm" {
+			return mode >= PermFullAccess
 		}
 		// Unknown tools require full access.
 		return mode >= PermFullAccess

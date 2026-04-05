@@ -3,7 +3,7 @@ package hook
 import (
 	"testing"
 
-	"github.com/ekkinox/yai/config"
+	"github.com/bearstonem/helm/config"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -35,7 +35,7 @@ func TestRunPreToolUse_DenyHook(t *testing.T) {
 func TestRunPreToolUse_EnvVars(t *testing.T) {
 	// Use a deny hook so the message is propagated
 	hooks := []config.HookConfig{
-		{Event: config.HookPreToolUse, Command: "echo $YAI_TOOL_NAME:$YAI_HOOK_EVENT && exit 1"},
+		{Event: config.HookPreToolUse, Command: "echo $HELM_TOOL_NAME:$HELM_HOOK_EVENT && exit 1"},
 	}
 	r := NewRunner(hooks, "/tmp")
 	result := r.RunPreToolUse("write_file", `{"path":"/tmp/test"}`)
@@ -62,7 +62,7 @@ func TestRunPostToolUse_NoHooks(t *testing.T) {
 
 func TestRunPostToolUse_CapturesOutput(t *testing.T) {
 	hooks := []config.HookConfig{
-		{Event: config.HookPostToolUse, Command: "echo logged:$YAI_TOOL_NAME"},
+		{Event: config.HookPostToolUse, Command: "echo logged:$HELM_TOOL_NAME"},
 	}
 	r := NewRunner(hooks, "/tmp")
 	result := r.RunPostToolUse("edit_file", `{"path":"/tmp/x"}`, "ok")

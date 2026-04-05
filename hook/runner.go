@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ekkinox/yai/config"
+	"github.com/bearstonem/helm/config"
 )
 
 // Result is what a hook execution returns.
@@ -41,9 +41,9 @@ func (r *Runner) RunPreToolUse(toolName string, toolArgs string) Result {
 
 	for _, h := range hooks {
 		result := r.execute(h, map[string]string{
-			"YAI_HOOK_EVENT": string(config.HookPreToolUse),
-			"YAI_TOOL_NAME":  toolName,
-			"YAI_TOOL_ARGS":  toolArgs,
+			"HELM_HOOK_EVENT": string(config.HookPreToolUse),
+			"HELM_TOOL_NAME":  toolName,
+			"HELM_TOOL_ARGS":  toolArgs,
 		})
 		if result.Action == config.HookDeny {
 			return result
@@ -64,10 +64,10 @@ func (r *Runner) RunPostToolUse(toolName string, toolArgs string, toolResult str
 	var messages []string
 	for _, h := range hooks {
 		result := r.execute(h, map[string]string{
-			"YAI_HOOK_EVENT":  string(config.HookPostToolUse),
-			"YAI_TOOL_NAME":   toolName,
-			"YAI_TOOL_ARGS":   toolArgs,
-			"YAI_TOOL_RESULT": toolResult,
+			"HELM_HOOK_EVENT":  string(config.HookPostToolUse),
+			"HELM_TOOL_NAME":   toolName,
+			"HELM_TOOL_ARGS":   toolArgs,
+			"HELM_TOOL_RESULT": toolResult,
 		})
 		if result.Message != "" {
 			messages = append(messages, result.Message)

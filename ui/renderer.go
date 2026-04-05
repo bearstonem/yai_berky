@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ekkinox/yai/config"
-	"github.com/ekkinox/yai/skill"
+	"github.com/bearstonem/helm/config"
+	"github.com/bearstonem/helm/skill"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
@@ -223,20 +223,19 @@ func (r *Renderer) RenderRemoteInfo(host string, hostname string, os string) str
 }
 
 func (r *Renderer) RenderHelpMessage() string {
-	help := "**Help**\n"
+	help := "**Helm** — AI Agent Platform\n\n"
+	help += "**Keyboard:**\n"
+	help += "- `tab`   : switch between `▶ exec`, `📡 chat`, and `🖖 agent` modes\n"
 	help += "- `↑`/`↓` : navigate in history\n"
-	help += "- `tab`   : switch between `🚀 exec`, `💬 chat`, and `🤖 agent` prompt modes\n"
-	help += "- `ctrl+h`: show help\n"
-	help += "- `ctrl+s`: edit settings\n"
-	help += "- `ctrl+r`: clear terminal and reset discussion history\n"
-	help += "- `ctrl+l`: clear terminal but keep discussion history\n"
-	help += "- `ctrl+c`: exit or interrupt command execution\n"
-	help += "- `alt+enter` or `ctrl+j`: insert newline (multiline input)\n"
-	help += "- `ctrl+v`: paste (supports multiline)\n\n"
-	help += "**Slash commands:** `/help`, `/clear`, `/reset`, `/compact`, `/cost`, `/session`, `/mode`, `/model`, `/yolo`, `/integrate`, `/skill`, `/memory`, `/diff`, `/commit`, `/status`, `/log`\n\n"
-	help += "**Agent mode:** the AI autonomously runs commands to complete tasks.\n"
-	help += "Use `/yolo` to toggle auto-execution at runtime, or set `USER_AGENT_AUTO_EXECUTE` in settings (`ctrl+s`).\n\n"
-	help += "**Permissions:** set `USER_PERMISSION_MODE` to `read-only`, `workspace-write` (default), or `full-access`.\n"
+	help += "- `alt+enter` / `ctrl+j`: insert newline\n"
+	help += "- `ctrl+h`: help  `ctrl+s`: settings  `ctrl+r`: reset  `ctrl+l`: clear  `ctrl+c`: quit\n\n"
+	help += "**Commands:** `/help` `/clear` `/reset` `/compact` `/cost` `/session` `/mode` `/model` `/yolo` `/integrate` `/skill` `/memory` `/diff` `/commit` `/status` `/log`\n\n"
+	help += "**Agent mode:** autonomously runs commands, reads/writes files, delegates to sub-agents, creates skills.\n"
+	help += "Use `/yolo` to toggle auto-execute. Set `USER_AGENT_AUTO_EXECUTE` in settings.\n\n"
+	help += "**Web GUI:** run `helm --gui` for full dashboard with agents, skills, themes, and self-improvement.\n"
+	help += "**Pipe mode:** `helm --pipe -a \"task\"` for headless operation (scripts/CI).\n"
+	help += "**Remote:** `helm --remote user@host task` for SSH agent mode.\n\n"
+	help += "**Permissions:** `USER_PERMISSION_MODE` = `read-only`, `workspace-write` (default), `full-access`.\n"
 
 	return help
 }

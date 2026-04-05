@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ekkinox/yai/ai"
-	"github.com/ekkinox/yai/config"
+	"github.com/bearstonem/helm/ai"
+	"github.com/bearstonem/helm/config"
 )
 
 // RunPipe executes a non-interactive pipe mode that bypasses bubbletea.
@@ -43,7 +43,7 @@ func RunPipe(input *UiInput) error {
 
 	query := input.GetArgs()
 	if query == "" {
-		return fmt.Errorf("no input provided (use: yai --pipe -a 'your task')")
+		return fmt.Errorf("no input provided (use: helm --pipe -a 'your task')")
 	}
 
 	switch promptMode {

@@ -12,13 +12,13 @@ import (
 )
 
 const (
-	exec_icon          = "🚀 > "
+	exec_icon          = "▶ > "
 	exec_placeholder   = "Execute something..."
-	config_icon        = "🔒 > "
+	config_icon        = "🔑 > "
 	config_placeholder = "Enter your API key..."
-	chat_icon          = "💬 > "
+	chat_icon          = "📡 > "
 	chat_placeholder   = "Ask me something..."
-	agent_icon         = "🤖 > "
+	agent_icon         = "🖖 > "
 	agent_placeholder  = "Give me a task..."
 )
 
@@ -93,7 +93,7 @@ func (p *Prompt) SetRemoteHost(host string) *Prompt {
 	p.remoteHost = host
 	if host != "" && p.mode == AgentPromptMode {
 		style := getPromptStyle(AgentPromptMode)
-		prompt := style.Render(fmt.Sprintf("🤖 %s > ", host))
+		prompt := style.Render(fmt.Sprintf("🖖 %s > ", host))
 		p.area.Prompt = prompt
 		p.area.Placeholder = fmt.Sprintf("Task for %s...", host)
 	}

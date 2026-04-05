@@ -4,82 +4,98 @@ classes: wide
 permalink: /getting-started/
 ---
 
-## What is `Yai` ?
+## What is Helm?
 
-`Yai` (your AI) is an assistant for your terminal, unleashing the power of artificial intelligence to streamline your command line experience.
+`Helm` is an AI agent platform for your terminal. It manages autonomous agents, creates reusable tools, remembers across sessions, and provides a web GUI for managing everything.
 
-It is already aware of your:
-- operating system & distribution
-- username, shell & home directory
-- preferred editor
-
-And you can also give any supplementary preferences to fine tune your experience.
+It is already aware of your operating system, shell, home directory, and preferred editor.
 
 ## Installation
 
-To install `Yai`, simply run:
+### From source (recommended)
+
+Requires [Go](https://go.dev/dl/) 1.21+ and a C compiler (CGO for sqlite-vec).
 
 ```shell
-curl -sS https://raw.githubusercontent.com/ekkinox/yai/main/install.sh | bash
+git clone https://github.com/bearstonem/helm.git && cd helm
+./install-local.sh
 ```
 
-- this will detect the proper binary to install for your machine
-- and upgrade to the latest stable version if already installed
-
-You can also install it from the [available releases](https://github.com/ekkinox/yai/releases) from the GitHub repository.
-
-To uninstall `Yai`, simply run the provided uninstallation script:
+Or manually:
 
 ```shell
-curl -sS https://raw.githubusercontent.com/ekkinox/yai/main/uninstall.sh | bash
+sudo apt-get install -y libsqlite3-dev  # Debian/Ubuntu
+CGO_ENABLED=1 go build -o helm .
+mv helm ~/.local/bin/
 ```
 
 ## Configuration
 
-At first run, `Yai` will ask you to provide an [OpenAI API key](https://platform.openai.com/account/api-keys) (required to interact with **ChatGPT AI**).
-
-It will then generate your configuration in the file `~/.config/yai.json`, with the following structure:
+At first run, Helm will ask you to choose a provider and enter your API key. The config is saved to `~/.config/helm.json`:
 
 ```json
 {
-  "openai_key": "sk-xxxxxxxxx",       // OpenAI API key (mandatory)
-  "openai_model": "gpt-3.5-turbo",    // OpenAI API model (default gpt-3.5-turbo)
-  "openai_proxy": "",                 // OpenAI API proxy (default disabled)
-  "openai_temperature": 0.2,          // OpenAI API temperature (defaut 0.2)
-  "openai_max_tokens": 1000,          // OpenAI API max tokens (default 1000)
-  "user_default_prompt_mode": "exec", // user prefered prompt mode: "exec" (default) or "chat"
-  "user_preferences": ""              // user preferences, expressed in natural language (default none)
+  "AI_PROVIDER": "openai",
+  "AI_API_KEY": "your-api-key",
+  "AI_MODEL": "gpt-4o-mini",
+  "AI_BASE_URL": "",
+  "AI_PROXY": "",
+  "AI_TEMPERATURE": 0.2,
+  "AI_MAX_TOKENS": 2000,
+  "USER_DEFAULT_PROMPT_MODE": "exec",
+  "USER_PREFERENCES": "",
+  "USER_ALLOW_SUDO": false,
+  "USER_AGENT_AUTO_EXECUTE": false,
+  "USER_PERMISSION_MODE": "workspace-write"
 }
 ```
 
-## Fine tuning
+### Supported Providers
 
-You can fine tune `Yai` by editing the settings in the `~/.config/yai.json` configuration file.
+| Provider | `AI_PROVIDER` | Needs API Key |
+|---|---|---|
+| OpenAI | `openai` | Yes (`OPENAI_API_KEY`) |
+| Anthropic Claude | `anthropic` | Yes (`ANTHROPIC_API_KEY`) |
+| OpenRouter | `openrouter` | Yes (`OPENROUTER_API_KEY`) |
+| MiniMax | `minimax` | Yes (`MINIMAX_API_KEY`) |
+| Ollama | `ollama` | No (local) |
+| llama.cpp | `llamacpp` | No (local) |
+| LM Studio | `lmstudio` | No (local) |
+| Custom | `custom` | Depends |
 
-Note that in `REPL` mode, you can press anytime `ctrl+s` to edit settings:
-- it will open your editor on the configuration file
-- and will hot reload settings changes when you're done.
+### Editing Settings
 
-### Model 
-
-You can use the `openai_model` to configure the AI model you want to use. By default, the model `gpt-3.5-turbo` is used.
-
-```json
-{
-  "openai_model": "gpt-4"
-}
-```
-
-You can find the list of [supported models here](https://platform.openai.com/docs/models/model-endpoint-compatibility) (must be compatible with OpenAI API `v1/chat/completions`).
+- In the TUI: press `ctrl+s` to open settings in your editor (hot-reloads on save)
+- In the Web GUI: Settings page with editable form
+- At runtime: `/model provider/model --save` to switch and persist
 
 ### Preferences
 
-You can use the `user_preferences` to express any preferences in your natural language:
+Use `USER_PREFERENCES` for natural-language customization:
 
 ```json
 {
-  "user_preferences": "I want you to talk like an humorist, and I want you to always add the -y flag when I use dnf"
+  "USER_PREFERENCES": "Always explain what commands do before running them. Prefer Python over Bash for scripting."
 }
 ```
 
-`Yai` will take them into account.
+### Permission Modes
+
+`USER_PERMISSION_MODE` controls what agents can do:
+
+| Mode | Allowed |
+|---|---|
+| `read-only` | Read files, search, list directories |
+| `workspace-write` (default) | Write files, run commands, create skills/agents, delegate |
+| `full-access` | Everything including `restart_helm` |
+
+## Quick Start
+
+```shell
+helm                           # interactive TUI
+helm --gui                     # web GUI at localhost:6900
+helm -a refactor the logging   # agent mode (one-shot)
+helm -c what is a mutex        # chat mode (one-shot)
+helm --pipe -a "deploy it"     # headless for scripts
+helm --remote user@host task   # remote SSH agent
+```

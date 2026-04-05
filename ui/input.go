@@ -17,18 +17,23 @@ type UiInput struct {
 	setup      bool
 	remote     string
 	pipeMode   bool
+	guiMode    bool
+	guiPort    int
 }
 
 func NewUIInput() (*UiInput, error) {
 	flagSet := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 
-	var exec, chat, agent, setup, pipeMode bool
+	var exec, chat, agent, setup, pipeMode, guiMode bool
 	var remote string
+	var guiPort int
 	flagSet.BoolVar(&exec, "e", false, "exec prompt mode")
 	flagSet.BoolVar(&chat, "c", false, "chat prompt mode")
 	flagSet.BoolVar(&agent, "a", false, "agent prompt mode")
 	flagSet.BoolVar(&pipeMode, "pipe", false, "non-interactive pipe mode (no TUI, plain text output)")
-	flagSet.BoolVar(&setup, "setup", false, "run the configuration wizard")
+	flagSet.BoolVar(&guiMode, "gui", false, "start web GUI")
+	flagSet.IntVar(&guiPort, "port", 6900, "port for web GUI")
+	flagSet.BoolVar(&setup, "setup", false, "run the interactive setup wizard")
 	flagSet.StringVar(&remote, "remote", "", "SSH target (user@host) for remote agent mode")
 	err := flagSet.Parse(os.Args[1:])
 	if err != nil {
@@ -88,6 +93,8 @@ func NewUIInput() (*UiInput, error) {
 		setup:      setup,
 		remote:     remote,
 		pipeMode:   pipeMode,
+		guiMode:    guiMode,
+		guiPort:    guiPort,
 	}, nil
 }
 
@@ -117,4 +124,12 @@ func (i *UiInput) GetRemote() string {
 
 func (i *UiInput) IsPipeMode() bool {
 	return i.pipeMode
+}
+
+func (i *UiInput) IsGUIMode() bool {
+	return i.guiMode
+}
+
+func (i *UiInput) GetGUIPort() int {
+	return i.guiPort
 }

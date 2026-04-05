@@ -3,15 +3,25 @@ layout: splash
 classes: wide
 ---
 
-## `Yai` - Your AI powered terminal assistant
+## `Helm` — AI Agent Platform
 
-> With `Yai` (your AI), unleash the power of artificial intelligence to streamline your command line experience.
+> An autonomous AI agent platform with multi-agent orchestration, self-improvement, and a web GUI.
 
-![](https://raw.githubusercontent.com/ekkinox/yai/main/docs/_assets/intro.gif)
+![](https://raw.githubusercontent.com/bearstonem/helm/main/docs/_assets/intro.gif)
 
-Just type your request in everyday language, and it will determine the appropriate command line action to take, or engage in conversation on any topics you have in mind.
+`Helm` manages fleets of autonomous agents, creates and evolves its own tools, remembers across sessions, and can even modify its own code with safety rollbacks.
 
-With `Yai`, you get the power of [OpenAI ChatGPT](https://chat.openai.com/) with the comfort of staying at `/home`!
+**Three modes:** `▶ exec` (commands), `📡 chat` (conversation), `🖖 agent` (autonomous multi-step tasks)
 
-See the project on [GitHub](https://github.com/ekkinox/yai).
+**Three interfaces:** TUI (`helm`), Web GUI (`helm --gui`), Pipe (`helm --pipe`)
 
+**Key features:**
+- Multi-agent orchestration with delegation, escalation, and parallel execution
+- Self-creating skills (bash, python, node, ruby scripts)
+- Self-improvement loop with goals, prime directive, and backup safety
+- Vector memory for cross-session context recall
+- 8 AI providers (OpenAI, Anthropic, OpenRouter, MiniMax, Ollama, llama.cpp, LM Studio, custom)
+- Web GUI with 7 themes, AI builders, delegation flow visualization
+- Remote SSH mode, pipe mode for CI/scripts
+
+See the project on [GitHub](https://github.com/bearstonem/helm).

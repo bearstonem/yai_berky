@@ -24,9 +24,9 @@ func (m *Manifest) ToolName() string {
 	return "skill_" + sanitizeName(m.Name)
 }
 
-// SkillsDir returns the default skills directory (~/.config/yai/skills/).
+// SkillsDir returns the default skills directory (~/.config/helm/skills/).
 func SkillsDir(homeDir string) string {
-	return filepath.Join(homeDir, ".config", "yai", "skills")
+	return filepath.Join(homeDir, ".config", "helm", "skills")
 }
 
 // LoadAll reads all skill manifests from the skills directory.
@@ -104,6 +104,72 @@ func Create(homeDir string, name, description, language, scriptContent string, p
 	}
 
 	return &m, nil
+}
+
+// Update modifies an existing skill's manifest and script.
+func Update(homeDir string, name, description, language, scriptContent string, parameters json.RawMessage) (*Manifest, error) {
+	safeName := sanitizeName(name)
+	if safeName == "" {
+		return nil, fmt.Errorf("invalid skill name: %q", name)
+	}
+
+	dir := filepath.Join(SkillsDir(homeDir), safeName)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return nil, fmt.Errorf("skill %q not found", name)
+	}
+
+	parameters = fixParameters(parameters)
+
+	// Load existing manifest to preserve created_at
+	var existing Manifest
+	manifestPath := filepath.Join(dir, "manifest.json")
+	if data, err := os.ReadFile(manifestPath); err == nil {
+		json.Unmarshal(data, &existing)
+	}
+
+	ext := extensionForLanguage(language)
+	scriptFile := "script" + ext
+
+	m := Manifest{
+		Name:        name,
+		Description: description,
+		Parameters:  parameters,
+		Language:    language,
+		ScriptFile:  scriptFile,
+		CreatedAt:   existing.CreatedAt,
+	}
+	if m.CreatedAt.IsZero() {
+		m.CreatedAt = time.Now()
+	}
+
+	// Remove old script if language changed
+	if existing.ScriptFile != "" && existing.ScriptFile != scriptFile {
+		os.Remove(filepath.Join(dir, existing.ScriptFile))
+	}
+
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshaling manifest: %w", err)
+	}
+	if err := os.WriteFile(manifestPath, data, 0644); err != nil {
+		return nil, fmt.Errorf("writing manifest: %w", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, scriptFile), []byte(scriptContent), 0755); err != nil {
+		return nil, fmt.Errorf("writing script: %w", err)
+	}
+
+	return &m, nil
+}
+
+// ReadScript reads the script content for a skill.
+func ReadScript(homeDir string, m Manifest) (string, error) {
+	path := ScriptPath(homeDir, m)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 // Remove deletes a skill by name.

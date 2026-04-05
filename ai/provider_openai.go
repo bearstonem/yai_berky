@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/ekkinox/yai/config"
+	"github.com/bearstonem/helm/config"
 	"github.com/sashabaranov/go-openai"
 )
 

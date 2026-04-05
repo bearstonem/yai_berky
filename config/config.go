@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ekkinox/yai/system"
+	"github.com/bearstonem/helm/system"
 	"github.com/spf13/viper"
 )
 
@@ -38,15 +38,15 @@ func NewConfig() (*Config, error) {
 		return nil, err
 	}
 
-	// Layer 2: project-level config (.yai/settings.json in workspace root)
-	// Layer 3: local config (.yai/settings.local.json — gitignored overrides)
+	// Layer 2: project-level config (.helm/settings.json in workspace root)
+	// Layer 3: local config (.helm/settings.local.json — gitignored overrides)
 	workRoot := sys.GetWorkspaceRoot()
 	if workRoot == "" {
 		workRoot = sys.GetCurrentDirectory()
 	}
 	if workRoot != "" {
-		overlayConfigFile(workRoot, ".yai", "settings")
-		overlayConfigFile(workRoot, ".yai", "settings.local")
+		overlayConfigFile(workRoot, ".helm", "settings")
+		overlayConfigFile(workRoot, ".helm", "settings.local")
 	}
 
 	provider := viper.GetString(ai_provider)
@@ -110,6 +110,19 @@ func NewConfig() (*Config, error) {
 		},
 		system: sys,
 	}, nil
+}
+
+// SaveAllSettings updates all config values and writes to disk.
+func SaveAllSettings(settings map[string]interface{}) (*Config, error) {
+	for k, v := range settings {
+		viper.Set(k, v)
+	}
+
+	if err := viper.WriteConfig(); err != nil {
+		return nil, fmt.Errorf("writing config: %w", err)
+	}
+
+	return NewConfig()
 }
 
 // overlayConfigFile merges a JSON config file on top of the current viper state.

@@ -1,32 +1,78 @@
-# Yai - AI powered terminal assistant
+# Helm - AI Agent Platform
 
-> Unleash the power of artificial intelligence to streamline your command line experience.
+> An autonomous AI agent platform with multi-agent orchestration, self-improvement, and a web GUI.
 
-![Intro](docs/_assets/intro.gif)
+## What is Helm?
 
-## What is Yai?
+`Helm` is an AI agent platform that goes beyond a terminal assistant. It manages fleets of autonomous agents, creates and evolves its own tools, remembers across sessions, and can even modify its own code with safety rollbacks. Describe what you need in everyday language — Helm delegates, orchestrates, and delivers.
 
-`Yai` (your AI) is an assistant for your terminal, using AI to build and run commands for you. You just need to describe them in your everyday language, it will take care of the rest.
+**Three modes** (press `tab` to cycle in the TUI):
+- **Exec** `▶` — describe what you want, get a single command, confirm with `y`
+- **Chat** `📡` — ask questions, get markdown-rendered answers
+- **Agent** `🖖` — give a task, the AI autonomously runs commands, reads/writes files, creates tools, and iterates until it's done
 
-You have any questions on random topics in mind? You can also ask `Yai`, and get the power of AI without leaving `/home`.
-
-**Three modes** (press `tab` to cycle):
-- **Exec** `🚀` -- describe what you want, get a single command, confirm with `y`
-- **Chat** `💬` -- ask questions, get markdown-rendered answers
-- **Agent** `🤖` -- give a task, the AI autonomously runs commands, reads/writes files, creates tools, and iterates until it's done
-
-It is already aware of your:
-- operating system & distribution
-- username, shell & home directory
-- preferred editor
-
-And you can also give any supplementary preferences to fine tune your experience.
+**Three interfaces:**
+- **TUI** — interactive terminal REPL with sub-agent delegation, escalation prompts, and full slash commands (`helm`)
+- **Web GUI** — full dashboard with agent management, skills, themes, delegation flow visualization (`helm --gui`)
+- **Pipe** — headless mode for scripts and CI (`helm --pipe -a "task"`)
 
 ## Features
 
-### Multi-Provider Support
+### Multi-Agent Orchestration
 
-Yai works with a wide range of cloud AI providers and local LLM runtimes through a unified OpenAI-compatible interface:
+Helm's primary agent automatically delegates tasks to specialized sub-agents:
+
+- **Automatic delegation** — the primary agent identifies which sub-agent matches a task and delegates immediately
+- **Agent creation on the fly** — if no agent matches, the primary creates one with a tailored system prompt and tool set
+- **Collaborative delegation** — any agent can delegate to any other agent, with cycle detection preventing infinite loops
+- **Parallel execution** — multiple agents run concurrently when the primary delegates to several at once
+- **Escalation to user** — any agent can pause and ask the user a question, then resume with the answer
+- **Agents as tools** — agent profiles appear as `agent_{id}` tools, assignable to other agents
+
+### Skills — Self-Creating Tools
+
+The agent can build its own reusable tools called **skills**:
+
+- Executable scripts (bash, python, node, ruby) that receive JSON args on stdin
+- Persist in `~/.config/helm/skills/` — available in all future sessions
+- Agents can assign skills to other agents when creating them
+- Create via the agent (`create_skill`), the web GUI, or the AI Builder chat
+
+### Self-Improvement Loop
+
+A heartbeat cycle where Helm autonomously evolves itself:
+
+- **Prime Directive** — set a high-level mission (e.g. "Focus on DevOps automation") or leave empty for fully autonomous operation
+- **Goals** — the agent creates, tracks, and updates goals in `~/.config/helm/goals/`
+- Each cycle: reviews goals → audits skills/agents → creates or improves one capability → tests it → logs progress
+- **Backup/restore safety** — full source backup before each cycle, auto-restore on failed builds
+- **Restart** — `restart_helm` tool rebuilds and relaunches after code changes
+- Configurable interval (default 5 minutes), real-time streaming in the GUI
+
+### Web GUI (`helm --gui`)
+
+A full dashboard at `http://localhost:6900`:
+
+- **Chat** — streaming chat with think-block rendering and code highlighting
+- **Primary Agent** — delegation flow panel, status chips, escalation UI
+- **Sub-Agents** — create/edit/delete agent profiles with system prompts and tool assignments
+- **Skills** — manage skills with an AI Builder assistant, filter by language
+- **Sessions** — browse, resume, and delete conversation history
+- **Settings** — editable config (provider, model, API key, temperature, permissions), provider cards
+- **Themes** — 7 themes: Default, Matrix, Netrunner, Snow Crash, Neuromancer, Blade Runner, LCARS
+- **Delegation Flow** — interactive side panel showing real-time agent tree with click-to-detail
+- **Self-Improve** — start/stop the evolution loop, set prime directive, watch goals and progress
+
+### Vector Memory
+
+Local vector memory powered by SQLite + sqlite-vec:
+
+- Indexes messages, skills, and sessions as 512-dim embeddings
+- OpenAI `text-embedding-3-small` with Ollama `nomic-embed-text` fallback
+- Relevant past conversations auto-injected into agent/chat prompts
+- Check stats with `/memory`
+
+### Multi-Provider Support
 
 | Provider | Type | Default Model |
 |---|---|---|
@@ -39,230 +85,128 @@ Yai works with a wide range of cloud AI providers and local LLM runtimes through
 | [LM Studio](https://lmstudio.ai/) | Local | `default` |
 | Custom (OpenAI-compatible) | Any | `default` |
 
-Local providers (Ollama, llama.cpp, LM Studio) do not require an API key.
-
-Providers that don't support OpenAI-style function calling (Ollama, llama.cpp, LM Studio) automatically use a prompt-based tool calling fallback -- the agent describes tools in the system prompt and parses JSON responses from the model.
-
-### Agent Mode
-
-Agent mode lets the AI autonomously complete multi-step tasks. Press `tab` to cycle to the `🤖 agent` prompt, describe your task, and the AI will:
-
-1. Plan what needs to be done
-2. Run shell commands, read/write/edit files, search the codebase
-3. Observe the output and iterate
-4. Provide a summary when finished
-
-**Agent tools:**
-
-| Tool | Description |
-|---|---|
-| `run_command` | Execute shell commands via `bash -c` |
-| `read_file` | Read file contents |
-| `write_file` | Create or overwrite files (supports plain text, line arrays, and base64) |
-| `edit_file` | Make targeted edits to existing files using search/replace |
-| `list_directory` | List directory contents |
-| `search_files` | Search file contents with regex patterns (ripgrep-style) |
-| `find_files` | Find files by name/glob pattern |
-| `create_skill` | Create a reusable skill (see Skills below) |
-| `list_skills` | List all available skills |
-| `remove_skill` | Remove a skill |
-
-By default, each tool call requires your confirmation (`y/N`). Toggle auto-execution with `/yolo` at runtime, or set `USER_AGENT_AUTO_EXECUTE` to `true` in settings.
-
-### Skills -- Agent-Created Tools
-
-The agent can create its own reusable tools called **skills**. Ask the agent to build an integration -- like "add a skill to query the GitHub API" or "create a tool that converts images with ImageMagick" -- and it will:
-
-1. Write an executable script (bash, python, node, or ruby)
-2. Define the tool schema (name, description, parameters)
-3. Save it as a persistent skill available in all future sessions
-
-Skills are stored in `~/.config/yai/skills/` as a manifest + script pair. On startup, Yai loads all skills and displays them alongside the built-in tools.
-
-Manage skills with the `/skill` slash command or let the agent handle it via `create_skill` / `remove_skill`.
-
-### Vector Memory
-
-Yai includes a local vector memory system powered by **SQLite + sqlite-vec** that gives the AI cross-session context recall.
-
-**What gets indexed:**
-- Conversation messages (user and assistant)
-- Skills (name and description)
-- Session summaries
-
-**How it works:**
-- Messages are embedded as 512-dimensional vectors using OpenAI `text-embedding-3-small` (with Ollama `nomic-embed-text` as a local fallback)
-- When you start a new conversation, relevant past messages are automatically retrieved via KNN search and injected into the system prompt
-- All indexing happens in the background -- no latency impact on your interactions
-
-Check memory stats with `/memory`.
+Providers without OpenAI-style function calling automatically use prompt-based tool calling.
 
 ### Tool Integrations
 
-Yai supports external tool integrations that extend the agent's capabilities:
+- **ComfyUI** — generate images via a local or remote ComfyUI server
+- **Webhook** — call arbitrary HTTP endpoints as agent tools
 
-- **ComfyUI** -- Generate images via a local or remote ComfyUI server
-- **Webhook** -- Call arbitrary HTTP endpoints as agent tools
-
-Set up integrations with `/integrate` and manage them interactively.
-
-### Multiline Input
-
-The input field supports multiline text:
-
-- **Enter** -- submit your message
-- **Alt+Enter** or **Ctrl+J** -- insert a newline
-- **Ctrl+V** -- paste from clipboard (multiline supported)
-
-### Pipe Mode (Non-Interactive)
-
-Use `--pipe` for headless, non-interactive operation. This bypasses the TUI entirely -- input comes from command-line args, output goes to stdout as plain text. Agent mode auto-executes all tools without confirmation.
-
-This makes yai usable as a tool by other AI agents, scripts, and CI pipelines.
-
-```shell
-# Agent mode -- auto-executes tools, prints final answer to stdout
-yai --pipe -a "find all TODO comments in this project"
-
-# Chat mode -- plain text response to stdout
-yai --pipe -c "explain what a goroutine is"
-
-# Exec mode -- prints just the command
-yai --pipe -e "list docker containers"
-
-# Pipe stdin
-echo "refactor this function" | yai --pipe -a
-
-# Use in scripts
-COMMAND=$(yai --pipe -e "compress all png files in current dir")
-echo "Would run: $COMMAND"
-```
-
-Diagnostic output (thinking, tool calls, results) goes to stderr, so stdout contains only the final answer. This means you can safely pipe or capture the output.
+Set up with `/integrate`.
 
 ### Remote Mode
 
-Use `--remote` to run agent mode on a remote machine via SSH. Yai stays on your local machine -- all commands, file reads, and writes tunnel through SSH automatically. No install needed on the remote host.
-
 ```shell
-# One-shot task on a remote host
-yai --remote user@192.168.1.81 check disk usage
-
-# Interactive REPL on a remote host
-yai --remote user@192.168.1.81
+helm --remote user@192.168.1.81 check disk usage
 ```
 
-The `--remote` flag implies agent mode. On startup, Yai probes the remote system (OS, shell, home directory) and includes this context in the prompt so the AI generates correct commands for the target.
+Runs agent mode on a remote machine via SSH. All commands, file reads, and writes tunnel through SSH. No install needed on the remote host.
 
-**Requirements:** Key-based SSH authentication must be configured for the target host (Yai uses `BatchMode=yes` and will not prompt for passwords).
+### Pipe Mode
 
-### Permission Modes
+```shell
+helm --pipe -a "find all TODO comments"    # agent, stdout only
+helm --pipe -c "explain goroutines"         # chat
+helm --pipe -e "list docker containers"     # exec, just the command
+echo "refactor this" | helm --pipe -a       # stdin
+```
 
-Control what the agent is allowed to do with `USER_PERMISSION_MODE`:
-
-| Mode | Description |
-|---|---|
-| `read-only` | Agent can only run commands and read files |
-| `workspace-write` (default) | Agent can also write/edit files in the workspace and create skills |
-| `full-access` | No restrictions on tool execution |
-
-### Sudo Support
-
-By default, Yai will not generate commands that use `sudo`. To enable elevated-privilege commands, set `USER_ALLOW_SUDO` to `true` in your config (`ctrl+s` inside Yai).
-
-When enabled:
-- The AI will use `sudo` when a task requires root access (installing packages, managing services, editing system files, etc.)
-- A `[sudo]` warning is shown before the confirmation prompt so you always know before executing
-- Sudo credentials are validated upfront via `sudo -v` before the actual command runs
+Headless mode for scripts and CI. Agent auto-executes tools. Stdout has the final answer, stderr has diagnostics.
 
 ## Quick Start
 
 ### Install from source
 
-Clone the repo and build. Requires [Go](https://go.dev/dl/) 1.21+ and a C compiler (CGO is required for sqlite-vec).
+Requires [Go](https://go.dev/dl/) 1.21+ and a C compiler (CGO for sqlite-vec).
 
 ```shell
-git clone https://github.com/ekkinox/yai.git && cd yai
-go build -o yai .
-mv yai ~/.local/bin/   # or anywhere on your PATH
-```
-
-Or use the install script:
-
-```shell
+git clone https://github.com/bearstonem/helm.git && cd helm
 ./install-local.sh
 ```
 
-This builds the binary, installs it to `~/.local/bin`, and adds it to your PATH automatically. You can customize the install directory with `INSTALL_DIR`:
+Or manually:
 
 ```shell
-INSTALL_DIR=/usr/local/bin sudo ./install-local.sh
+CGO_ENABLED=1 go build -o helm .
+mv helm ~/.local/bin/
 ```
-
-At first run, it will ask you to choose a provider and enter your API key (if needed), then create the configuration file in `~/.config/yai.json`.
 
 ### Usage
 
 ```shell
-# Interactive REPL (default)
-yai
-
-# One-shot exec mode
-yai list all docker containers
-
-# One-shot chat mode
-yai -c explain what a goroutine is
-
-# One-shot agent mode
-yai -a refactor the logging in this project
-
-# Pipe mode (no TUI, plain text I/O, agent auto-executes)
-yai --pipe -a "create a hello world web server"
-yai --pipe -c "what is a mutex" > answer.txt
-
-# Agent on a remote host
-yai --remote user@host deploy the latest build
+helm                           # interactive TUI
+helm --gui                     # web GUI at localhost:6900
+helm --gui --port 8080         # custom port
+helm -a refactor the logging   # agent mode
+helm -c what is a mutex        # chat mode
+helm list all docker containers # exec mode
+helm --pipe -a "deploy it"     # headless
+helm --remote user@host task   # remote SSH
 ```
 
-## Keyboard Shortcuts
+## Keyboard Shortcuts (TUI)
 
 | Key | Action |
 |---|---|
-| `tab` | Switch between exec, chat, and agent modes |
+| `tab` | Switch modes (▶ exec / 📡 chat / 🖖 agent) |
 | `↑` / `↓` | Navigate input history |
-| `enter` | Submit input |
-| `alt+enter` / `ctrl+j` | Insert newline (multiline input) |
+| `enter` | Submit |
+| `alt+enter` / `ctrl+j` | Insert newline |
 | `ctrl+v` | Paste from clipboard |
-| `ctrl+h` | Show help |
+| `ctrl+h` | Help |
 | `ctrl+s` | Edit settings |
-| `ctrl+r` | Clear terminal and reset discussion history |
-| `ctrl+l` | Clear terminal but keep discussion history |
-| `ctrl+c` | Exit or interrupt agent |
+| `ctrl+r` | Clear + reset history |
+| `ctrl+l` | Clear (keep history) |
+| `ctrl+c` | Exit or interrupt |
 
-## Slash Commands
+## Slash Commands (TUI)
 
 | Command | Description |
 |---|---|
 | `/help` | Show help |
 | `/clear` | Clear terminal |
-| `/reset` | Clear terminal and reset conversation |
-| `/compact` | Compact conversation history to save tokens |
-| `/cost` | Show token usage and estimated cost |
-| `/session [save\|load\|list]` | Manage conversation sessions |
-| `/mode [exec\|chat\|agent]` | Switch prompt mode |
-| `/model [provider/model] [--save]` | Switch model at runtime, optionally save as default |
-| `/yolo` | Toggle auto-execute for agent tool calls |
-| `/integrate` | Manage tool integrations |
-| `/skill [list\|remove <name>]` | Manage agent-created skills |
-| `/memory` | Show vector memory stats |
-| `/diff` | Show git diff of working tree |
-| `/commit <message>` | Stage all and commit |
-| `/status` | Show git status |
-| `/log` | Show recent git log |
+| `/reset` | Clear + reset conversation |
+| `/compact` | Compact history to save tokens |
+| `/cost` | Show token usage |
+| `/session [save\|load\|list]` | Manage sessions |
+| `/mode [exec\|chat\|agent]` | Switch mode |
+| `/model [provider/model] [--save]` | Switch model |
+| `/yolo` | Toggle auto-execute |
+| `/integrate` | Manage integrations |
+| `/skill [list\|remove <name>]` | Manage skills |
+| `/agent [select <id>\|clear]` | List, select, or clear agent profile |
+| `/goals` | List self-improvement goals |
+| `/memory` | Vector memory stats |
+| `/diff` | Git diff |
+| `/commit <message>` | Git commit |
+| `/status` | Git status |
+| `/log` | Git log |
+
+## Agent Tools
+
+| Tool | Description |
+|---|---|
+| `web_search` | Search the web via Brave Search API (built-in, requires `BRAVE_API_KEY`) |
+| `run_command` | Execute shell commands (60s timeout) |
+| `read_file` | Read file contents |
+| `write_file` | Create or overwrite files |
+| `edit_file` | Search-and-replace edits |
+| `list_directory` | List directory contents |
+| `search_files` | Regex search (like grep) |
+| `find_files` | Glob file search |
+| `create_skill` | Create a reusable skill |
+| `list_skills` / `remove_skill` | Manage skills |
+| `create_agent` | Create a sub-agent profile |
+| `delegate_task` | Delegate work to a sub-agent |
+| `escalate_to_user` | Ask the user a question |
+| `list_goals` / `create_goal` / `update_goal` | Manage self-improvement goals |
+| `restart_helm` | Rebuild and relaunch after code changes |
+
+Plus: `agent_{id}` tools for each agent profile, `skill_{name}` tools for each skill.
 
 ## Configuration
 
-The configuration file lives at `~/.config/yai.json`. You can edit it directly or press `ctrl+s` inside Yai.
+Config file: `~/.config/helm.json`
 
 ```json
 {
@@ -281,35 +225,43 @@ The configuration file lives at `~/.config/yai.json`. You can edit it directly o
 }
 ```
 
-| Key | Description |
-|---|---|
-| `AI_PROVIDER` | One of: `openai`, `anthropic`, `openrouter`, `minimax`, `ollama`, `llamacpp`, `lmstudio`, `custom` |
-| `AI_API_KEY` | Your API key (not required for local providers) |
-| `AI_MODEL` | Model name to use |
-| `AI_BASE_URL` | Custom API base URL (auto-set for known providers, override for custom setups) |
-| `AI_PROXY` | HTTP proxy URL |
-| `AI_TEMPERATURE` | Sampling temperature (0-2) |
-| `AI_MAX_TOKENS` | Maximum tokens in the response |
-| `USER_DEFAULT_PROMPT_MODE` | Default mode: `exec`, `chat`, or `agent` |
-| `USER_PREFERENCES` | Free-text preferences appended to the system prompt |
-| `USER_ALLOW_SUDO` | Allow commands with `sudo` (default `false`) |
-| `USER_AGENT_AUTO_EXECUTE` | Skip confirmation for each tool call in agent mode (default `false`) |
-| `USER_PERMISSION_MODE` | Agent permission level: `read-only`, `workspace-write`, `full-access` |
+Provider-specific API keys via env vars: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `MINIMAX_API_KEY`.
 
-**Environment variables:** Provider-specific API keys can be set via environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `MINIMAX_API_KEY`) and take precedence over the config file. Existing configs using legacy `OPENAI_*` keys continue to work.
+Project-level overrides: `.helm/settings.json` and `.helm/settings.local.json`.
+
+### Permission Modes
+
+| Mode | What's allowed |
+|---|---|
+| `read-only` | Read files, search, list |
+| `workspace-write` (default) | Write/edit files, run commands, create skills/agents, delegate |
+| `full-access` | Everything including `restart_helm` |
+
+## Data Storage
+
+```
+~/.config/helm.json          # main config
+~/.config/helm/
+  skills/{name}/             # skill manifests + scripts
+  agents/{id}.json           # agent profiles
+  sessions/{id}.json         # conversation sessions
+  goals/{id}.json            # self-improvement goals
+  memory.db                  # vector memory (sqlite-vec)
+  backups/                   # source backups for self-improvement
+    manifest.json            # backup tracking
+    restart.sh               # auto-generated restart script
+    {timestamp}/             # timestamped source snapshots
+```
 
 ## Building
 
-Yai uses CGO for the sqlite-vec vector memory system. You'll need:
-
-- Go 1.21+
-- A C compiler (`gcc` or `clang`)
-- SQLite development headers: `sudo apt-get install libsqlite3-dev` (Debian/Ubuntu)
+Requires CGO for sqlite-vec:
 
 ```shell
-CGO_ENABLED=1 go build -o yai .
+sudo apt-get install -y libsqlite3-dev  # Debian/Ubuntu
+CGO_ENABLED=1 go build -o helm .
 ```
 
 ## Thanks
 
-Thanks to [@K-arch27](https://github.com/K-arch27) for the `Yai` name suggestion.
+Originally forked from [ekkinox/yai](https://github.com/ekkinox/yai). Thanks to [@K-arch27](https://github.com/K-arch27) for the original name suggestion.

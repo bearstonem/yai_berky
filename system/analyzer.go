@@ -6,12 +6,12 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/ekkinox/yai/run"
+	"github.com/bearstonem/helm/run"
 
 	"github.com/mitchellh/go-homedir"
 )
 
-const APPLICATION_NAME = "Yai"
+const APPLICATION_NAME = "Helm"
 
 type Analysis struct {
 	operatingSystem OperatingSystem

@@ -1,20 +1,43 @@
 package ai
 
 import (
+	"context"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/ekkinox/yai/config"
-	"github.com/ekkinox/yai/hook"
-	"github.com/ekkinox/yai/integration"
-	"github.com/ekkinox/yai/run"
-	"github.com/ekkinox/yai/skill"
+	"github.com/bearstonem/helm/agent"
+	"github.com/bearstonem/helm/config"
+	"github.com/bearstonem/helm/goal"
+	"github.com/bearstonem/helm/hook"
+	"github.com/bearstonem/helm/integration"
+	"github.com/bearstonem/helm/run"
+	"github.com/bearstonem/helm/skill"
 )
+
+//go:embed builtin_skills/web_search.js
+var webSearchScript string
+
+var webSearchSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"query": {
+			"type": "string",
+			"description": "The search query"
+		},
+		"count": {
+			"type": "integer",
+			"description": "Number of results (default 10)"
+		}
+	},
+	"required": ["query"]
+}`)
 
 var runCommandSchema = json.RawMessage(`{
 	"type": "object",
@@ -195,11 +218,136 @@ var listSkillsSchema = json.RawMessage(`{
 	"properties": {}
 }`)
 
+var createAgentSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"name": {
+			"type": "string",
+			"description": "Human-readable name for the agent (e.g. 'DevOps Engineer', 'UI Designer')"
+		},
+		"description": {
+			"type": "string",
+			"description": "Short description of what this agent specializes in"
+		},
+		"system_prompt": {
+			"type": "string",
+			"description": "Full system prompt defining the agent's role, approach, and constraints"
+		},
+		"tools": {
+			"type": "array",
+			"items": { "type": "string" },
+			"description": "List of tool names this agent can use. Omit or empty array for all tools."
+		}
+	},
+	"required": ["name", "description", "system_prompt"]
+}`)
+
+var delegateTaskSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"agent_id": {
+			"type": "string",
+			"description": "ID of the sub-agent profile to delegate the task to"
+		},
+		"task": {
+			"type": "string",
+			"description": "Clear, complete description of the task for the sub-agent to accomplish"
+		},
+		"context": {
+			"type": "string",
+			"description": "Optional shared context: relevant findings, decisions, or constraints to pass to the sub-agent"
+		}
+	},
+	"required": ["agent_id", "task"]
+}`)
+
+var escalateToUserSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"question": {
+			"type": "string",
+			"description": "The question or clarification needed from the user"
+		},
+		"context": {
+			"type": "string",
+			"description": "Brief context about what you are working on and why you need user input"
+		}
+	},
+	"required": ["question"]
+}`)
+
+var listGoalsSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {}
+}`)
+
+var createGoalSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"title": {
+			"type": "string",
+			"description": "Short title for the goal"
+		},
+		"description": {
+			"type": "string",
+			"description": "Detailed description of what this goal aims to achieve"
+		},
+		"priority": {
+			"type": "integer",
+			"description": "Priority: 1=high, 2=medium, 3=low"
+		}
+	},
+	"required": ["title", "description"]
+}`)
+
+var restartHelmSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"reason": {
+			"type": "string",
+			"description": "Brief description of why a restart is needed (e.g. 'updated engine code')"
+		}
+	},
+	"required": ["reason"]
+}`)
+
+var updateGoalSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"id": {
+			"type": "string",
+			"description": "ID of the goal to update"
+		},
+		"status": {
+			"type": "string",
+			"description": "New status: active, completed, or paused"
+		},
+		"progress": {
+			"type": "string",
+			"description": "Progress notes to append"
+		},
+		"title": {
+			"type": "string",
+			"description": "Updated title (optional)"
+		},
+		"description": {
+			"type": "string",
+			"description": "Updated description (optional)"
+		}
+	},
+	"required": ["id"]
+}`)
+
 func AgentTools() []Tool {
 	return []Tool{
 		{
+			Name:        "web_search",
+			Description: "Search the web using Brave Search API. Returns titles, URLs, and descriptions. Requires BRAVE_API_KEY environment variable. Use for research, fact-checking, finding documentation, current events.",
+			Parameters:  webSearchSchema,
+		},
+		{
 			Name:        "run_command",
-			Description: "Execute a shell command and return its stdout, stderr, and exit code. Use for running programs, installing packages, checking system state, etc.",
+			Description: "Execute a shell command and return its stdout, stderr, and exit code. Commands time out after 60 seconds. NEVER start long-running processes (dev servers, watchers, daemons) — they will hang until timeout. Use for short-lived commands only: builds, installs, tests, file operations, git.",
 			Parameters:  runCommandSchema,
 		},
 		{
@@ -247,6 +395,41 @@ func AgentTools() []Tool {
 			Description: "Remove a user-created skill by name.",
 			Parameters:  removeSkillSchema,
 		},
+		{
+			Name:        "create_agent",
+			Description: "Create a new persistent sub-agent with a specialized system prompt and tool set. Use this when the user's task requires expertise that no existing sub-agent covers. The agent is saved and available for immediate delegation and future sessions.",
+			Parameters:  createAgentSchema,
+		},
+		{
+			Name:        "delegate_task",
+			Description: "Delegate a task to a specialized sub-agent. The sub-agent runs autonomously with its own system prompt and tools, and returns its result when done. Use when a task matches a specific sub-agent's expertise. You can delegate to multiple agents simultaneously.",
+			Parameters:  delegateTaskSchema,
+		},
+		{
+			Name:        "escalate_to_user",
+			Description: "Pause and ask the user a question or request a decision. Use when you encounter ambiguity, need approval for a risky action, or lack information to proceed. The user will see your question and respond.",
+			Parameters:  escalateToUserSchema,
+		},
+		{
+			Name:        "list_goals",
+			Description: "List all current self-improvement goals with their status and progress.",
+			Parameters:  listGoalsSchema,
+		},
+		{
+			Name:        "create_goal",
+			Description: "Create a new goal to track progress toward an objective.",
+			Parameters:  createGoalSchema,
+		},
+		{
+			Name:        "update_goal",
+			Description: "Update a goal's status, progress notes, or details.",
+			Parameters:  updateGoalSchema,
+		},
+		{
+			Name:        "restart_helm",
+			Description: "Trigger a restart of the Helm application after making code changes. This kills the current process, rebuilds from source, and relaunches. If the build fails, the latest backup is automatically restored. Only use after modifying application source code.",
+			Parameters:  restartHelmSchema,
+		},
 	}
 }
 
@@ -260,6 +443,10 @@ type ToolExecutor struct {
 	integrationTools []integration.IntegrationTool
 	skills           []skill.Manifest
 	onSkillChange    func(action, name, description string) // "create" or "remove"
+	onCreateAgent      func(name, description, systemPrompt string, tools []string) (string, error)
+	onDelegateTask     func(agentID, task, context string) (string, error)
+	onEscalateToUser   func(question, context string) (string, error)
+	onRestartHelm      func(reason string) (string, error)
 }
 
 func NewToolExecutor(allowSudo bool, homeDir string, workDir string, permMode config.PermissionMode) *ToolExecutor {
@@ -303,6 +490,22 @@ func (te *ToolExecutor) SetOnSkillChange(fn func(action, name, description strin
 	te.onSkillChange = fn
 }
 
+func (te *ToolExecutor) SetOnCreateAgent(fn func(name, description, systemPrompt string, tools []string) (string, error)) {
+	te.onCreateAgent = fn
+}
+
+func (te *ToolExecutor) SetOnDelegateTask(fn func(agentID, task, context string) (string, error)) {
+	te.onDelegateTask = fn
+}
+
+func (te *ToolExecutor) SetOnEscalateToUser(fn func(question, context string) (string, error)) {
+	te.onEscalateToUser = fn
+}
+
+func (te *ToolExecutor) SetOnRestartHelm(fn func(reason string) (string, error)) {
+	te.onRestartHelm = fn
+}
+
 func (te *ToolExecutor) findSkill(toolName string) *skill.Manifest {
 	for i := range te.skills {
 		if te.skills[i].ToolName() == toolName {
@@ -312,7 +515,23 @@ func (te *ToolExecutor) findSkill(toolName string) *skill.Manifest {
 	return nil
 }
 
-// AllTools returns built-in tools plus integration tools plus user-created skills.
+// agentToolSchema is the parameter schema for agent-as-tool calls.
+var agentToolSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"task": {
+			"type": "string",
+			"description": "The task to give this agent"
+		},
+		"context": {
+			"type": "string",
+			"description": "Optional context to pass to the agent"
+		}
+	},
+	"required": ["task"]
+}`)
+
+// AllTools returns built-in tools plus integration tools, skills, and agent profiles.
 func (te *ToolExecutor) AllTools() []Tool {
 	tools := AgentTools()
 	for _, it := range te.integrationTools {
@@ -327,6 +546,15 @@ func (te *ToolExecutor) AllTools() []Tool {
 			Name:        s.ToolName(),
 			Description: s.Description,
 			Parameters:  s.Parameters,
+		})
+	}
+	// Add agent profiles as callable tools
+	agents, _ := agent.LoadAll(te.homeDir)
+	for _, a := range agents {
+		tools = append(tools, Tool{
+			Name:        "agent_" + a.ID,
+			Description: fmt.Sprintf("Delegate to %s: %s", a.Name, a.Description),
+			Parameters:  agentToolSchema,
 		})
 	}
 	return tools
@@ -369,6 +597,8 @@ func (te *ToolExecutor) Execute(tc ToolCall) ToolResult {
 	var diff string
 
 	switch tc.Name {
+	case "web_search":
+		content = te.executeWebSearch(tc.Arguments)
 	case "run_command":
 		content = te.executeRunCommand(tc.Arguments)
 	case "read_file":
@@ -389,9 +619,40 @@ func (te *ToolExecutor) Execute(tc ToolCall) ToolResult {
 		content = te.executeListSkills()
 	case "remove_skill":
 		content = te.executeRemoveSkill(tc.Arguments)
+	case "create_agent":
+		content = te.executeCreateAgent(tc.Arguments)
+	case "delegate_task":
+		content = te.executeDelegateTask(tc.Arguments)
+	case "escalate_to_user":
+		content = te.executeEscalateToUser(tc.Arguments)
+	case "list_goals":
+		content = te.executeListGoals()
+	case "create_goal":
+		content = te.executeCreateGoal(tc.Arguments)
+	case "update_goal":
+		content = te.executeUpdateGoal(tc.Arguments)
+	case "restart_helm":
+		content = te.executeRestartHelm(tc.Arguments)
 	default:
-		// Check integration tools
-		if it := te.findIntegrationTool(tc.Name); it != nil {
+		// Check agent-as-tool calls (agent_*)
+		if strings.HasPrefix(tc.Name, "agent_") && te.onDelegateTask != nil {
+			agentID := tc.Name[6:] // strip "agent_" prefix
+			var args struct {
+				Task    string `json:"task"`
+				Context string `json:"context"`
+			}
+			if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
+				content = fmt.Sprintf("error parsing arguments: %s", err)
+			} else {
+				result, err := te.onDelegateTask(agentID, args.Task, args.Context)
+				if err != nil {
+					content = fmt.Sprintf("error delegating to agent %q: %s", agentID, err)
+				} else {
+					content = result
+				}
+			}
+		} else if it := te.findIntegrationTool(tc.Name); it != nil {
+			// Check integration tools
 			result := integration.Execute(*it, tc.Arguments)
 			content = result.Content
 		} else if s := te.findSkill(tc.Name); s != nil {
@@ -416,6 +677,42 @@ func (te *ToolExecutor) Execute(tc ToolCall) ToolResult {
 		Content:    content,
 		Diff:       diff,
 	}
+}
+
+func (te *ToolExecutor) executeWebSearch(argsJSON string) string {
+	// Write the embedded script to a temp file and execute it
+	tmpFile, err := os.CreateTemp("", "helm-web-search-*.js")
+	if err != nil {
+		return fmt.Sprintf("error creating temp file: %s", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.WriteString(webSearchScript); err != nil {
+		tmpFile.Close()
+		return fmt.Sprintf("error writing script: %s", err)
+	}
+	tmpFile.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "node", tmpFile.Name())
+	cmd.Stdin = strings.NewReader(argsJSON)
+	cmd.Env = os.Environ()
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if len(output) > 0 {
+			return string(output)
+		}
+		return fmt.Sprintf("error: %s", err)
+	}
+
+	result := strings.TrimSpace(string(output))
+	if len(result) > 50000 {
+		result = result[:50000] + "... (truncated)"
+	}
+	return result
 }
 
 func (te *ToolExecutor) executeRunCommand(argsJSON string) string {
@@ -894,6 +1191,167 @@ func (te *ToolExecutor) executeRemoveSkill(argsJSON string) string {
 	}
 
 	return fmt.Sprintf("Skill %q removed successfully.", args.Name)
+}
+
+func (te *ToolExecutor) executeCreateAgent(argsJSON string) string {
+	var args struct {
+		Name         string   `json:"name"`
+		Description  string   `json:"description"`
+		SystemPrompt string   `json:"system_prompt"`
+		Tools        []string `json:"tools"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+	if args.Name == "" || args.SystemPrompt == "" {
+		return "error: name and system_prompt are required"
+	}
+	if te.onCreateAgent == nil {
+		return "error: agent creation not available in this context"
+	}
+	result, err := te.onCreateAgent(args.Name, args.Description, args.SystemPrompt, args.Tools)
+	if err != nil {
+		return fmt.Sprintf("error creating agent: %s", err)
+	}
+	return result
+}
+
+func (te *ToolExecutor) executeDelegateTask(argsJSON string) string {
+	var args struct {
+		AgentID string `json:"agent_id"`
+		Task    string `json:"task"`
+		Context string `json:"context"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+	if args.AgentID == "" || args.Task == "" {
+		return "error: agent_id and task are required"
+	}
+	if te.onDelegateTask == nil {
+		return "error: delegation not available in this context"
+	}
+	result, err := te.onDelegateTask(args.AgentID, args.Task, args.Context)
+	if err != nil {
+		return fmt.Sprintf("error delegating to agent %q: %s", args.AgentID, err)
+	}
+	return result
+}
+
+func (te *ToolExecutor) executeEscalateToUser(argsJSON string) string {
+	var args struct {
+		Question string `json:"question"`
+		Context  string `json:"context"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+	if args.Question == "" {
+		return "error: question is required"
+	}
+	if te.onEscalateToUser == nil {
+		return "error: escalation not available in this context"
+	}
+	response, err := te.onEscalateToUser(args.Question, args.Context)
+	if err != nil {
+		return fmt.Sprintf("error escalating: %s", err)
+	}
+	return fmt.Sprintf("User responded: %s", response)
+}
+
+func (te *ToolExecutor) executeListGoals() string {
+	goals, err := goal.LoadAll(te.homeDir)
+	if err != nil {
+		return fmt.Sprintf("error loading goals: %s", err)
+	}
+	if len(goals) == 0 {
+		return "No goals exist yet. Create some with create_goal."
+	}
+	data, _ := json.MarshalIndent(goals, "", "  ")
+	return string(data)
+}
+
+func (te *ToolExecutor) executeCreateGoal(argsJSON string) string {
+	var args struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Priority    int    `json:"priority"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+	if args.Title == "" {
+		return "error: title is required"
+	}
+	if args.Priority == 0 {
+		args.Priority = 2
+	}
+	g := &goal.Goal{
+		Title:       args.Title,
+		Description: args.Description,
+		Priority:    args.Priority,
+	}
+	if err := goal.Save(te.homeDir, g); err != nil {
+		return fmt.Sprintf("error creating goal: %s", err)
+	}
+	return fmt.Sprintf("Goal %q created (id: %s, priority: %d).", g.Title, g.ID, g.Priority)
+}
+
+func (te *ToolExecutor) executeUpdateGoal(argsJSON string) string {
+	var args struct {
+		ID          string `json:"id"`
+		Status      string `json:"status"`
+		Progress    string `json:"progress"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+	if args.ID == "" {
+		return "error: id is required"
+	}
+	g, err := goal.Load(te.homeDir, args.ID)
+	if err != nil {
+		return fmt.Sprintf("error loading goal: %s", err)
+	}
+	if args.Status != "" {
+		g.Status = args.Status
+	}
+	if args.Progress != "" {
+		if g.Progress != "" {
+			g.Progress += "\n" + args.Progress
+		} else {
+			g.Progress = args.Progress
+		}
+	}
+	if args.Title != "" {
+		g.Title = args.Title
+	}
+	if args.Description != "" {
+		g.Description = args.Description
+	}
+	if err := goal.Save(te.homeDir, g); err != nil {
+		return fmt.Sprintf("error updating goal: %s", err)
+	}
+	return fmt.Sprintf("Goal %q updated (status: %s).", g.Title, g.Status)
+}
+
+func (te *ToolExecutor) executeRestartHelm(argsJSON string) string {
+	var args struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+	if te.onRestartHelm == nil {
+		return "error: restart not available in this context"
+	}
+	result, err := te.onRestartHelm(args.Reason)
+	if err != nil {
+		return fmt.Sprintf("error: %s", err)
+	}
+	return result
 }
 
 func formatCapturedOutput(output *run.CapturedOutput) string {

@@ -4,61 +4,110 @@ classes: wide
 permalink: /usage/
 ---
 
-## CLI mode
+## Interfaces
 
-> CLI mode is made to be integrated in your command lines workflow.
+Helm has three interfaces:
 
-You can perform a single run:
+### TUI (Terminal)
 
-```shell
-yai list all processes listening on port 8080
-```
+Interactive REPL with three modes — press `tab` to cycle:
 
-You can ask for a command line generation, enforcing `🚀 exec` prompt mode usage with `-e`:
-
-```shell
-yai -e show the disk usage of my docker resources
-```
-
-You can ask any question, enforcing `💬 chat` prompt mode usage with `-c`:
+- `▶ exec` — describe what you want, get a command, confirm with `y`
+- `📡 chat` — ask questions, get markdown answers
+- `🖖 agent` — give a task, the AI runs commands autonomously
 
 ```shell
-yai -c generate me a go application example using fiber
+helm                            # interactive REPL
+helm list docker containers     # exec mode (one-shot)
+helm -e show disk usage         # force exec mode
+helm -c explain goroutines      # force chat mode
+helm -a refactor the logging    # force agent mode
 ```
 
-You can also `pipe` input that will be taken into account in your request:
+Pipe input is supported:
 
 ```shell
-cat some_script.go | yai -c generate unit tests
+cat error.log | helm -c explain what is wrong
+cat script.go | helm -c generate unit tests
 ```
 
-Or even:
+### Web GUI
+
+Full dashboard with agent management, skills, themes, and self-improvement:
 
 ```shell
-cat error.log | yai -c explain what is wrong here
+helm --gui                      # default port 6900
+helm --gui --port 8080          # custom port
 ```
 
-## REPL mode
+Pages: Chat, Primary Agent, Sub-Agents, Skills, Sessions, Settings
 
-> REPL mode is made to work in an interactive way.
+### Pipe Mode (Headless)
 
-Just run:
+For scripts, CI, and other AI agents. No TUI, plain text output:
 
 ```shell
-yai
+helm --pipe -a "find all TODOs"           # agent
+helm --pipe -c "explain what a mutex is"  # chat
+helm --pipe -e "compress all PNGs"        # exec (just the command)
+echo "deploy this" | helm --pipe -a       # stdin
 ```
 
-This will open a [REPL](https://en.wikipedia.org/wiki/Read%E2%80%93eval%E2%80%93print_loop) interface, with 2 types of prompts (use `tab` to switch)
+### Remote Mode (SSH)
 
-- `🚀 exec`: will generate a command line to execute for what you're asking
-- `💬 chat`: will engage in a discussion to help you the best way possible
+Run agent mode on a remote machine via SSH:
 
-You also can use the following **keyboard shortcuts**:
-- `↑` `↓`  : Navigate in history                                 
-- `tab`    : Switch between `🚀 exec` and `💬 chat` prompt modes 
-- `ctrl+h` : Show help                                           
-- `ctrl+s` : Edit settings                                       
-- `ctrl+r` : Clear terminal and reset discussion history         
-- `ctrl+l` : Clear terminal but keep discussion history          
-- `ctrl+c` : Exit or interrupt command execution                 
+```shell
+helm --remote user@192.168.1.81 check disk usage
+helm --remote user@host                    # interactive
+```
 
+## Keyboard Shortcuts (TUI)
+
+| Key | Action |
+|---|---|
+| `tab` | Switch modes (▶ exec / 📡 chat / 🖖 agent) |
+| `↑` / `↓` | Navigate input history |
+| `enter` | Submit |
+| `alt+enter` / `ctrl+j` | Insert newline |
+| `ctrl+v` | Paste |
+| `ctrl+h` | Help |
+| `ctrl+s` | Edit settings |
+| `ctrl+r` | Clear + reset history |
+| `ctrl+l` | Clear (keep history) |
+| `ctrl+c` | Exit or interrupt |
+
+## Slash Commands
+
+| Command | Description |
+|---|---|
+| `/help` | Show help |
+| `/clear` | Clear terminal |
+| `/reset` | Clear + reset conversation |
+| `/compact` | Compact history to save tokens |
+| `/cost` | Token usage and cost estimate |
+| `/session` | Manage sessions (save/load/list) |
+| `/mode` | Switch prompt mode |
+| `/model` | Switch provider/model at runtime |
+| `/yolo` | Toggle auto-execute for agent |
+| `/integrate` | Manage tool integrations |
+| `/skill` | Manage agent-created skills |
+| `/agent` | List, select, or clear agent profiles |
+| `/goals` | List self-improvement goals |
+| `/memory` | Vector memory stats |
+| `/diff` `/commit` `/status` `/log` | Git operations |
+
+## Agent Mode
+
+The agent autonomously completes multi-step tasks using tools:
+
+- `run_command` — shell commands (60s timeout)
+- `read_file` / `write_file` / `edit_file` — file operations
+- `list_directory` / `search_files` / `find_files` — exploration
+- `create_skill` / `create_agent` — self-extending capabilities
+- `delegate_task` — delegate to specialized sub-agents
+- `escalate_to_user` — pause and ask you a question
+- `list_goals` / `create_goal` / `update_goal` — self-improvement
+- `restart_helm` — rebuild after code changes (full-access mode)
+
+Sub-agents run in parallel and report back. Any agent can delegate to any other agent. The primary agent creates new agents and skills on the fly when needed.

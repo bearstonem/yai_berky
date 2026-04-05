@@ -21,9 +21,9 @@ func init() {
 	vec.Auto()
 }
 
-// Open opens (or creates) the memory database at ~/.config/yai/memory.db.
+// Open opens (or creates) the memory database at ~/.config/helm/memory.db.
 func Open(homeDir string) (*Store, error) {
-	dir := filepath.Join(homeDir, ".config", "yai")
+	dir := filepath.Join(homeDir, ".config", "helm")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("creating memory dir: %w", err)
 	}

@@ -8,13 +8,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ekkinox/yai/config"
-	"github.com/ekkinox/yai/hook"
-	"github.com/ekkinox/yai/integration"
-	"github.com/ekkinox/yai/memory"
-	"github.com/ekkinox/yai/run"
-	"github.com/ekkinox/yai/session"
-	"github.com/ekkinox/yai/system"
+	"os"
+	"os/exec"
+	"path/filepath"
+
+	"github.com/bearstonem/helm/agent"
+	"github.com/bearstonem/helm/backup"
+	"github.com/bearstonem/helm/config"
+	"github.com/bearstonem/helm/hook"
+	"github.com/bearstonem/helm/integration"
+	"github.com/bearstonem/helm/memory"
+	"github.com/bearstonem/helm/run"
+	"github.com/bearstonem/helm/session"
+	"github.com/bearstonem/helm/system"
 )
 
 const noexec = "[noexec]"
@@ -47,9 +53,13 @@ type Engine struct {
 	remoteInfo    *RemoteSystemInfo
 	session       *session.Session
 	onUsage       func(inputTokens, outputTokens int)
-	modelOverride string // runtime model override; empty = use config
-	memoryStore   *memory.Store
-	embedder      memory.EmbeddingProvider
+	modelOverride   string // runtime model override; empty = use config
+	agentProfile    *agent.Profile // custom agent profile; nil = default
+	memoryStore     *memory.Store
+	embedder        memory.EmbeddingProvider
+	homeDir         string
+	delegationChain []string // agent IDs in the delegation path; empty = primary
+	escalationChan  chan string // receives user response to escalation
 }
 
 func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
@@ -89,7 +99,7 @@ func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
 		}
 	}
 
-	return &Engine{
+	e := &Engine{
 		mode:          mode,
 		config:        cfg,
 		provider:      provider,
@@ -102,9 +112,19 @@ func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
 		toolExecutor:  te,
 		pipe:          "",
 		running:       false,
-		memoryStore:   memStore,
-		embedder:      embedder,
-	}, nil
+		memoryStore:    memStore,
+		embedder:       embedder,
+		homeDir:        homeDir,
+		escalationChan: make(chan string),
+	}
+
+	// Wire agent management callbacks
+	te.SetOnCreateAgent(e.executeCreateAgent)
+	te.SetOnDelegateTask(e.executeDelegation)
+	te.SetOnEscalateToUser(e.executeEscalation)
+	te.SetOnRestartHelm(e.executeRestart)
+
+	return e, nil
 }
 
 func newToolExecutorWithHooksAndIntegrations(allowSudo bool, homeDir, workDir string, permMode config.PermissionMode, hooks []config.HookConfig, integrations []config.IntegrationConfig) *ToolExecutor {
@@ -166,6 +186,11 @@ func buildEmbedder(cfg *config.Config) memory.EmbeddingProvider {
 
 	// Fallback: try Ollama locally
 	return memory.NewOllamaEmbedder("", "")
+}
+
+// GetToolExecutor returns the tool executor.
+func (e *Engine) GetToolExecutor() *ToolExecutor {
+	return e.toolExecutor
 }
 
 // GetMemoryStore returns the memory store (may be nil).
@@ -431,6 +456,15 @@ func (e *Engine) GetSession() *session.Session {
 
 func (e *Engine) SetSession(s *session.Session) {
 	e.session = s
+}
+
+// SetAgentProfile configures a custom agent profile that overrides
+// the system prompt and optionally restricts the available tools.
+func (e *Engine) SetAgentProfile(p *agent.Profile) {
+	e.agentProfile = p
+	if p != nil && p.Model != "" {
+		e.modelOverride = p.Model
+	}
 }
 
 func (e *Engine) StartNewSession() {
@@ -758,6 +792,13 @@ func (e *Engine) preparePipePrompt() string {
 }
 
 func (e *Engine) prepareSystemPrompt() string {
+	// If a custom agent profile is set, use its system prompt
+	if e.agentProfile != nil && e.agentProfile.SystemPrompt != "" {
+		prompt := e.agentProfile.SystemPrompt
+		prompt += "\n" + e.prepareSystemPromptContextPart()
+		return prompt
+	}
+
 	var bodyPart string
 	switch e.mode {
 	case ExecEngineMode:
@@ -772,7 +813,7 @@ func (e *Engine) prepareSystemPrompt() string {
 }
 
 func (e *Engine) prepareSystemPromptExecPart() string {
-	prompt := "Your are Yai, a powerful terminal assistant generating a JSON containing a command line for my input.\n" +
+	prompt := "You are Helm, a powerful terminal assistant generating a JSON containing a command line for my input.\n" +
 		"You will always reply using the following json structure: {\"cmd\":\"the command\", \"exp\": \"some explanation\", \"exec\": true}.\n" +
 		"Your answer will always only contain the json structure, never add any advice or supplementary detail or information, even if I asked the same question before.\n" +
 		"The field cmd will contain a single line command (don't use new lines, use separators like && and ; instead).\n" +
@@ -791,28 +832,39 @@ func (e *Engine) prepareSystemPromptExecPart() string {
 	prompt += "\n" +
 		"Examples:\n" +
 		"Me: list all files in my home dir\n" +
-		"Yai: {\"cmd\":\"ls ~\", \"exp\": \"list all files in your home dir\", \"exec\": true}\n" +
+		"Helm: {\"cmd\":\"ls ~\", \"exp\": \"list all files in your home dir\", \"exec\": true}\n" +
 		"Me: list all pods of all namespaces\n" +
-		"Yai: {\"cmd\":\"kubectl get pods --all-namespaces\", \"exp\": \"list pods form all k8s namespaces\", \"exec\": true}\n" +
+		"Helm: {\"cmd\":\"kubectl get pods --all-namespaces\", \"exp\": \"list pods form all k8s namespaces\", \"exec\": true}\n" +
 		"Me: how are you ?\n" +
-		"Yai: {\"cmd\":\"\", \"exp\": \"I'm good thanks but I cannot generate a command for this. Use the chat mode to discuss.\", \"exec\": false}"
+		"Helm: {\"cmd\":\"\", \"exp\": \"I'm good thanks but I cannot generate a command for this. Use the chat mode to discuss.\", \"exec\": false}"
 
 	return prompt
 }
 
 func (e *Engine) prepareSystemPromptChatPart() string {
-	return "You are Yai a powerful terminal assistant created by github.com/ekkinox.\n" +
+	return "You are Helm a powerful terminal assistant created by github.com/bearstonem.\n" +
 		"You will answer in the most helpful possible way.\n" +
 		"Always format your answer in markdown format.\n\n" +
 		"For example:\n" +
 		"Me: What is 2+2 ?\n" +
-		"Yai: The answer for `2+2` is `4`\n" +
+		"Helm: The answer for `2+2` is `4`\n" +
 		"Me: +2 again ?\n" +
-		"Yai: The answer is `6`\n"
+		"Helm: The answer is `6`\n"
 }
 
 func (e *Engine) prepareSystemPromptAgentPart() string {
-	prompt := "You are Yai, an autonomous terminal agent. You help the user accomplish software engineering and system administration tasks.\n\n"
+	prompt := "You are Helm, an autonomous terminal agent.\n\n"
+
+	// DELEGATION FIRST — this is the primary agent's most important instruction
+	if len(e.delegationChain) == 0 {
+		delegationBlock := e.prepareAvailableAgents()
+		if delegationBlock != "" {
+			prompt += delegationBlock + "\n"
+		}
+	} else {
+		// Sub-agent: collaborative instructions
+		prompt += e.prepareAvailableAgents() + "\n"
+	}
 
 	if e.remoteHost != "" {
 		prompt += fmt.Sprintf("IMPORTANT: You are operating on a REMOTE host via SSH (%s).\n", e.remoteHost)
@@ -867,6 +919,11 @@ Skills prefixed with skill_ appear as regular tools you can call.
 - Be careful not to introduce security vulnerabilities (command injection, XSS, SQL injection, etc.).
 - Prefer simple, direct solutions over clever abstractions.
 
+# Long-running processes
+- NEVER start dev servers, file watchers, or daemons with run_command — they will hang until timeout (60s).
+- Build and test only. If the user wants to run a server, tell them to do it manually.
+- Use background processes (&) only if you don't need the output.
+
 # Safety
 - Be careful with destructive operations (rm -rf, git reset --hard, DROP TABLE). Explain the risk.
 - Don't overwrite files without reading them first.
@@ -883,6 +940,309 @@ Skills prefixed with skill_ appear as regular tools you can call.
 	return prompt
 }
 
+// agentTools returns the tool set for the current agent, filtered by profile if set.
+// Sub-agents can delegate to other agents but not create new ones.
+func (e *Engine) agentTools() []Tool {
+	all := e.toolExecutor.AllTools()
+
+	// Determine self agent_* tool name to exclude
+	selfToolName := ""
+	if e.agentProfile != nil {
+		selfToolName = "agent_" + e.agentProfile.ID
+	}
+
+	var tools []Tool
+	if e.agentProfile != nil && len(e.agentProfile.Tools) > 0 {
+		allowed := make(map[string]bool, len(e.agentProfile.Tools))
+		for _, name := range e.agentProfile.Tools {
+			allowed[name] = true
+		}
+		for _, t := range all {
+			if allowed[t.Name] && t.Name != selfToolName {
+				tools = append(tools, t)
+			}
+		}
+	} else {
+		for _, t := range all {
+			if t.Name != selfToolName {
+				tools = append(tools, t)
+			}
+		}
+	}
+
+	// Sub-agents can delegate but not create new agents
+	if len(e.delegationChain) > 0 {
+		var filtered []Tool
+		for _, t := range tools {
+			if t.Name != "create_agent" {
+				filtered = append(filtered, t)
+			}
+		}
+		return filtered
+	}
+
+	return tools
+}
+
+// executeCreateAgent creates a new persistent sub-agent profile.
+func (e *Engine) executeCreateAgent(name, description, systemPrompt string, tools []string) (string, error) {
+	p := &agent.Profile{
+		Name:         name,
+		Description:  description,
+		SystemPrompt: systemPrompt,
+		Tools:        tools,
+	}
+	if err := agent.Save(e.homeDir, p); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Agent %q created (id: %s). You can now delegate tasks to it with delegate_task.", name, p.ID), nil
+}
+
+// executeDelegation runs a sub-agent with the given profile and task.
+// It forwards sub-agent events to the parent's channel and returns the final answer.
+// Uses cycle detection instead of depth limits to allow collaborative multi-agent workflows.
+func (e *Engine) executeDelegation(agentID, task, sharedContext string) (string, error) {
+	// Cycle detection: check if this agent is already in the chain
+	for _, id := range e.delegationChain {
+		if id == agentID {
+			return "", fmt.Errorf("cycle detected: agent %q is already in the delegation chain %v", agentID, e.delegationChain)
+		}
+	}
+	// Safety cap on chain length
+	if len(e.delegationChain) >= 6 {
+		return "", fmt.Errorf("delegation chain too deep (%d agents): %v", len(e.delegationChain), e.delegationChain)
+	}
+
+	profile, err := agent.Load(e.homeDir, agentID)
+	if err != nil {
+		return "", fmt.Errorf("agent %q not found: %w", agentID, err)
+	}
+
+	// Notify: sub-agent starting
+	e.agentChannel <- AgentEvent{
+		Type:      AgentEventSubAgentStart,
+		AgentID:   agentID,
+		AgentName: profile.Name,
+		Content:   task,
+	}
+
+	// Create independent sub-engine
+	subEngine, err := NewEngine(AgentEngineMode, e.config)
+	if err != nil {
+		return "", fmt.Errorf("creating sub-engine: %w", err)
+	}
+	subEngine.SetAgentProfile(profile)
+
+	// Build the delegation chain for the sub-engine
+	myID := "__primary__"
+	if e.agentProfile != nil {
+		myID = e.agentProfile.ID
+	}
+	subEngine.delegationChain = append(append([]string{}, e.delegationChain...), myID)
+	subEngine.StartNewSession()
+
+	// Inject shared context if provided
+	if sharedContext != "" {
+		subEngine.appendUserMessage("## Context from delegating agent\n" + sharedContext)
+		subEngine.appendAgentMessage(Message{Role: "assistant", Content: "Understood. I have the shared context. Proceeding with the task."})
+	}
+
+	// Run sub-agent in background; close channel when done so forwarding loop exits
+	done := make(chan error, 1)
+	go func() {
+		done <- subEngine.AgentCompletion(task, true)
+		close(subEngine.agentChannel)
+	}()
+
+	// Forward sub-agent events to parent channel, tagged with agent identity
+	var finalAnswer string
+	subCh := subEngine.GetAgentChannel()
+	for event := range subCh {
+		event.AgentID = agentID
+		event.AgentName = profile.Name
+
+		switch event.Type {
+		case AgentEventAnswer:
+			finalAnswer = event.Content
+			e.agentChannel <- event
+		case AgentEventDone:
+			// Don't forward Done — sub-agent done != parent done
+		case AgentEventEscalation:
+			// Forward escalation to parent's channel (bubbles up to user)
+			e.agentChannel <- event
+			// Relay user's response back down to the sub-agent
+			go func() {
+				response := <-e.escalationChan
+				subEngine.RespondToEscalation(response)
+			}()
+		default:
+			e.agentChannel <- event
+		}
+	}
+
+	// Wait for completion
+	if err := <-done; err != nil {
+		e.agentChannel <- AgentEvent{
+			Type:      AgentEventSubAgentDone,
+			AgentID:   agentID,
+			AgentName: profile.Name,
+			Content:   "failed: " + err.Error(),
+		}
+		return "", err
+	}
+
+	e.agentChannel <- AgentEvent{
+		Type:      AgentEventSubAgentDone,
+		AgentID:   agentID,
+		AgentName: profile.Name,
+		Content:   "completed",
+	}
+
+	if finalAnswer == "" {
+		finalAnswer = "(sub-agent completed without a final answer)"
+	}
+	return finalAnswer, nil
+}
+
+// executeEscalation pauses the agent and asks the user a question.
+func (e *Engine) executeEscalation(question, context string) (string, error) {
+	content := question
+	if context != "" {
+		content = question + "\n\nContext: " + context
+	}
+
+	agentID := ""
+	agentName := ""
+	if e.agentProfile != nil {
+		agentID = e.agentProfile.ID
+		agentName = e.agentProfile.Name
+	}
+
+	e.agentChannel <- AgentEvent{
+		Type:      AgentEventEscalation,
+		Content:   content,
+		AgentID:   agentID,
+		AgentName: agentName,
+	}
+
+	// Block until the user responds
+	response := <-e.escalationChan
+	return response, nil
+}
+
+// RespondToEscalation sends the user's response to a blocked escalation.
+func (e *Engine) RespondToEscalation(response string) {
+	e.escalationChan <- response
+}
+
+// executeRestart triggers the restart script to rebuild and relaunch Helm.
+func (e *Engine) executeRestart(reason string) (string, error) {
+	scriptPath := filepath.Join(backup.BackupsDir(e.homeDir), "restart.sh")
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("restart script not found at %s — run from GUI mode to generate it", scriptPath)
+	}
+
+	// Launch restart script in background (it will kill this process)
+	cmd := exec.Command("bash", scriptPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("failed to launch restart script: %w", err)
+	}
+
+	return fmt.Sprintf("Restart initiated (reason: %s). The application will stop, rebuild, and relaunch. If the build fails, the latest backup will be restored automatically.", reason), nil
+}
+
+// prepareAvailableAgents returns a prompt section listing available agents for collaboration.
+func (e *Engine) prepareAvailableAgents() string {
+	var b strings.Builder
+	isPrimary := len(e.delegationChain) == 0
+
+	agents, _ := agent.LoadAll(e.homeDir)
+
+	// Filter out self
+	myID := ""
+	if e.agentProfile != nil {
+		myID = e.agentProfile.ID
+	}
+	var otherAgents []agent.Profile
+	for _, a := range agents {
+		if a.ID != myID {
+			otherAgents = append(otherAgents, a)
+		}
+	}
+
+	// List available skills (skill_* tools)
+	var skillNames []string
+	for _, t := range e.toolExecutor.AllTools() {
+		if len(t.Name) > 6 && t.Name[:6] == "skill_" {
+			skillNames = append(skillNames, t.Name)
+		}
+	}
+
+	if isPrimary {
+		b.WriteString("\n# DELEGATION — IMPORTANT\n")
+		b.WriteString("You are an orchestrator. Your PRIMARY job is to delegate work to specialized sub-agents, NOT to do work yourself.\n\n")
+
+		if len(otherAgents) > 0 {
+			b.WriteString("## Available Sub-Agents:\n")
+			b.WriteString("Each agent is also available as a direct tool (`agent_{id}`) that you can assign to other agents.\n\n")
+			for _, a := range otherAgents {
+				tools := "all tools"
+				if len(a.Tools) > 0 {
+					tools = fmt.Sprintf("%d tools: %s", len(a.Tools), strings.Join(a.Tools, ", "))
+				}
+				b.WriteString(fmt.Sprintf("- **%s** (id: `%s`, %s): %s\n", a.Name, a.ID, tools, a.Description))
+			}
+			b.WriteString("\n")
+		} else {
+			b.WriteString("No sub-agents exist yet. Create one before doing any substantial work.\n\n")
+		}
+
+		if len(skillNames) > 0 {
+			b.WriteString("## Available Skills:\n")
+			b.WriteString("These skill_* tools can be assigned to agents when creating them: ")
+			b.WriteString(strings.Join(skillNames, ", "))
+			b.WriteString("\n\n")
+		}
+
+		b.WriteString("## Rules:\n")
+		b.WriteString("1. If a sub-agent matches the request, delegate IMMEDIATELY with `delegate_task`.\n")
+		b.WriteString("2. For complex tasks, delegate to MULTIPLE agents CONCURRENTLY (multiple `delegate_task` calls in one response).\n")
+		b.WriteString("3. If NO sub-agent matches, CREATE one first with `create_agent` (give it a good system prompt and assign relevant tools including skill_* tools), then delegate to it.\n")
+		b.WriteString("4. If a task needs a capability that doesn't exist as a skill, create it with `create_skill` first, then assign it to the agent.\n")
+		b.WriteString("5. Use `escalate_to_user` to ask the user for information you need (API keys, preferences, credentials, clarifications).\n")
+		b.WriteString("6. Only do work yourself for simple questions, clarifications, or trivial tasks.\n")
+		b.WriteString("7. When creating agents, include relevant skill_* tools in the tools list so the agent can use them.\n")
+		b.WriteString("8. Pass relevant context via the `context` parameter when delegating.\n")
+	} else {
+		b.WriteString("\n# COLLABORATION\n")
+		b.WriteString("You can collaborate with other agents and the user:\n\n")
+
+		if len(otherAgents) > 0 {
+			b.WriteString("## Other Agents:\n")
+			for _, a := range otherAgents {
+				b.WriteString(fmt.Sprintf("- **%s** (id: `%s`): %s\n", a.Name, a.ID, a.Description))
+			}
+			b.WriteString("\n")
+		}
+
+		if len(skillNames) > 0 {
+			b.WriteString("## Available Skills: ")
+			b.WriteString(strings.Join(skillNames, ", "))
+			b.WriteString("\n\n")
+		}
+
+		b.WriteString("## Rules:\n")
+		b.WriteString("- Use `delegate_task` to ask another agent for help when needed.\n")
+		b.WriteString("- Use `escalate_to_user` when you need clarification, approval, or information from the user.\n")
+		b.WriteString("- If you need a skill that doesn't exist, use `create_skill` to build it.\n")
+		b.WriteString("- Pass context when delegating so the other agent understands the situation.\n")
+	}
+
+	return b.String()
+}
+
 func (e *Engine) AgentCompletion(input string, autoExecute bool) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancelFn = cancel
@@ -891,7 +1251,10 @@ func (e *Engine) AgentCompletion(input string, autoExecute bool) error {
 	e.running = true
 	e.appendUserMessage(input)
 
-	const maxIterations = 50
+	maxIterations := 50
+	if len(e.delegationChain) > 0 {
+		maxIterations = 200 // sub-agents get more room to work on complex tasks
+	}
 
 	for i := 0; i < maxIterations; i++ {
 		if !e.running {
@@ -903,7 +1266,7 @@ func (e *Engine) AgentCompletion(input string, autoExecute bool) error {
 			MaxTokens:   e.config.GetAiConfig().GetMaxTokens(),
 			Temperature: e.config.GetAiConfig().GetTemperature(),
 			Messages:    e.prepareCompletionMessages(),
-			Tools:       e.toolExecutor.AllTools(),
+			Tools:       e.agentTools(),
 		}
 
 		resp, err := e.provider.CompleteWithTools(ctx, req)
@@ -942,7 +1305,18 @@ func (e *Engine) AgentCompletion(input string, autoExecute bool) error {
 
 		e.appendAgentMessage(cleanResp)
 
+		// Separate delegation calls from regular tool calls
+		var delegations, regular []ToolCall
 		for _, tc := range cleanResp.ToolCalls {
+			if tc.Name == "delegate_task" {
+				delegations = append(delegations, tc)
+			} else {
+				regular = append(regular, tc)
+			}
+		}
+
+		// Execute regular tool calls sequentially
+		for _, tc := range regular {
 			if !e.running {
 				return nil
 			}
@@ -974,6 +1348,35 @@ func (e *Engine) AgentCompletion(input string, autoExecute bool) error {
 				ToolCallID: result.ToolCallID,
 			})
 			e.agentChannel <- AgentEvent{Type: AgentEventToolResult, ToolResult: &result}
+		}
+
+		// Execute delegations in parallel
+		if len(delegations) > 0 {
+			type delegResult struct {
+				tc     ToolCall
+				result ToolResult
+			}
+			resultsCh := make(chan delegResult, len(delegations))
+
+			for _, tc := range delegations {
+				tc := tc // capture loop var
+				e.agentChannel <- AgentEvent{Type: AgentEventToolCall, ToolCall: &tc}
+				go func() {
+					result := e.toolExecutor.Execute(tc)
+					resultsCh <- delegResult{tc: tc, result: result}
+				}()
+			}
+
+			// Collect all delegation results
+			for range delegations {
+				dr := <-resultsCh
+				e.appendAgentMessage(Message{
+					Role:       "tool",
+					Content:    dr.result.Content,
+					ToolCallID: dr.result.ToolCallID,
+				})
+				e.agentChannel <- AgentEvent{Type: AgentEventToolResult, ToolResult: &dr.result}
+			}
 		}
 	}
 
@@ -1058,10 +1461,10 @@ func (e *Engine) prepareSystemPromptContextPart() string {
 		part += fmt.Sprintf("Also, %s.", e.config.GetUserConfig().GetPreferences())
 	}
 
-	// Inject instruction files (YAI.md) discovered from the workspace.
+	// Inject instruction files (HELM.md) discovered from the workspace.
 	instructions := system.DiscoverInstructions(workDir)
 	if instructions != "" {
-		part += "\n\n# Project Instructions (from YAI.md)\n\n" + instructions
+		part += "\n\n# Project Instructions (from HELM.md)\n\n" + instructions
 	}
 
 	return part
