@@ -74,6 +74,10 @@ func IsToolAllowed(toolName string, mode PermissionMode) bool {
 		if len(toolName) > 6 && toolName[:6] == "skill_" {
 			return mode >= PermWorkspaceWrite
 		}
+		// Agent-as-tool calls are allowed in workspace-write mode.
+		if len(toolName) > 6 && toolName[:6] == "agent_" {
+			return mode >= PermWorkspaceWrite
+		}
 		// Skill management tools
 		if toolName == "create_skill" || toolName == "list_skills" || toolName == "remove_skill" {
 			return mode >= PermWorkspaceWrite

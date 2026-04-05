@@ -934,6 +934,12 @@ Skills prefixed with skill_ appear as regular tools you can call.
 func (e *Engine) agentTools() []Tool {
 	all := e.toolExecutor.AllTools()
 
+	// Determine self agent_* tool name to exclude
+	selfToolName := ""
+	if e.agentProfile != nil {
+		selfToolName = "agent_" + e.agentProfile.ID
+	}
+
 	var tools []Tool
 	if e.agentProfile != nil && len(e.agentProfile.Tools) > 0 {
 		allowed := make(map[string]bool, len(e.agentProfile.Tools))
@@ -941,12 +947,16 @@ func (e *Engine) agentTools() []Tool {
 			allowed[name] = true
 		}
 		for _, t := range all {
-			if allowed[t.Name] {
+			if allowed[t.Name] && t.Name != selfToolName {
 				tools = append(tools, t)
 			}
 		}
 	} else {
-		tools = all
+		for _, t := range all {
+			if t.Name != selfToolName {
+				tools = append(tools, t)
+			}
+		}
 	}
 
 	// Sub-agents can delegate but not create new agents
@@ -1147,6 +1157,7 @@ func (e *Engine) prepareAvailableAgents() string {
 
 		if len(otherAgents) > 0 {
 			b.WriteString("## Available Sub-Agents:\n")
+			b.WriteString("Each agent is also available as a direct tool (`agent_{id}`) that you can assign to other agents.\n\n")
 			for _, a := range otherAgents {
 				tools := "all tools"
 				if len(a.Tools) > 0 {

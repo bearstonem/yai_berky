@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bearstonem/helm/agent"
 	"github.com/bearstonem/helm/config"
 	"github.com/bearstonem/helm/hook"
 	"github.com/bearstonem/helm/integration"
@@ -400,7 +401,23 @@ func (te *ToolExecutor) findSkill(toolName string) *skill.Manifest {
 	return nil
 }
 
-// AllTools returns built-in tools plus integration tools plus user-created skills.
+// agentToolSchema is the parameter schema for agent-as-tool calls.
+var agentToolSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"task": {
+			"type": "string",
+			"description": "The task to give this agent"
+		},
+		"context": {
+			"type": "string",
+			"description": "Optional context to pass to the agent"
+		}
+	},
+	"required": ["task"]
+}`)
+
+// AllTools returns built-in tools plus integration tools, skills, and agent profiles.
 func (te *ToolExecutor) AllTools() []Tool {
 	tools := AgentTools()
 	for _, it := range te.integrationTools {
@@ -415,6 +432,15 @@ func (te *ToolExecutor) AllTools() []Tool {
 			Name:        s.ToolName(),
 			Description: s.Description,
 			Parameters:  s.Parameters,
+		})
+	}
+	// Add agent profiles as callable tools
+	agents, _ := agent.LoadAll(te.homeDir)
+	for _, a := range agents {
+		tools = append(tools, Tool{
+			Name:        "agent_" + a.ID,
+			Description: fmt.Sprintf("Delegate to %s: %s", a.Name, a.Description),
+			Parameters:  agentToolSchema,
 		})
 	}
 	return tools
@@ -484,8 +510,25 @@ func (te *ToolExecutor) Execute(tc ToolCall) ToolResult {
 	case "escalate_to_user":
 		content = te.executeEscalateToUser(tc.Arguments)
 	default:
-		// Check integration tools
-		if it := te.findIntegrationTool(tc.Name); it != nil {
+		// Check agent-as-tool calls (agent_*)
+		if strings.HasPrefix(tc.Name, "agent_") && te.onDelegateTask != nil {
+			agentID := tc.Name[6:] // strip "agent_" prefix
+			var args struct {
+				Task    string `json:"task"`
+				Context string `json:"context"`
+			}
+			if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
+				content = fmt.Sprintf("error parsing arguments: %s", err)
+			} else {
+				result, err := te.onDelegateTask(agentID, args.Task, args.Context)
+				if err != nil {
+					content = fmt.Sprintf("error delegating to agent %q: %s", agentID, err)
+				} else {
+					content = result
+				}
+			}
+		} else if it := te.findIntegrationTool(tc.Name); it != nil {
+			// Check integration tools
 			result := integration.Execute(*it, tc.Arguments)
 			content = result.Content
 		} else if s := te.findSkill(tc.Name); s != nil {
