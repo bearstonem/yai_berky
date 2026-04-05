@@ -12,19 +12,19 @@ import (
 )
 
 const (
-	exec_color    = "#ffa657"
-	config_color  = "#ffffff"
-	chat_color    = "#66b3ff"
-	agent_color   = "#bb86fc"
-	help_color    = "#aaaaaa"
-	error_color   = "#cc3333"
-	warning_color = "#ffcc00"
-	success_color = "#46b946"
-	dim_color     = "#888888"
-	diff_add_color    = "#46b946"
-	diff_remove_color = "#cc3333"
-	diff_hunk_color   = "#66b3ff"
-	diff_header_color = "#bbbbbb"
+	exec_color    = "#e8a435"
+	config_color  = "#d4c5a9"
+	chat_color    = "#45b5aa"
+	agent_color   = "#e05a3a"
+	help_color    = "#7a6e5d"
+	error_color   = "#c23616"
+	warning_color = "#e8a435"
+	success_color = "#45b5aa"
+	dim_color     = "#6b6050"
+	diff_add_color    = "#45b5aa"
+	diff_remove_color = "#c23616"
+	diff_hunk_color   = "#e8a435"
+	diff_header_color = "#d4c5a9"
 )
 
 type Renderer struct {
