@@ -63,24 +63,30 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 Write-Ok "Docker $(docker --version | ForEach-Object { $_ -replace 'Docker version ','' -replace ',.*','' })"
 
 # Verify Docker daemon is running — if not, try to start it
-$null = docker info 2>&1
-if ($LASTEXITCODE -ne 0) {
+$daemonRunning = $false
+try { $null = docker info 2>&1; if ($LASTEXITCODE -eq 0) { $daemonRunning = $true } } catch {}
+
+if (-not $daemonRunning) {
     Write-Warn "Docker daemon is not running. Attempting to start Docker Desktop..."
-    Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe" -WindowStyle Minimized -ErrorAction SilentlyContinue
-    $retries = 30
+    $dockerExe = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+    if (Test-Path $dockerExe) {
+        Start-Process $dockerExe -WindowStyle Minimized
+    } else {
+        # Try finding it via registry or common paths
+        Start-Process "Docker Desktop" -ErrorAction SilentlyContinue
+    }
+    $retries = 60
     $running = $false
+    Write-Host "    Waiting for Docker daemon" -NoNewline
     for ($i = 0; $i -lt $retries; $i++) {
         Start-Sleep -Seconds 2
-        $null = docker info 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            $running = $true
-            break
-        }
+        try { $null = docker info 2>&1; if ($LASTEXITCODE -eq 0) { $running = $true } } catch {}
+        if ($running) { break }
         Write-Host "." -NoNewline
     }
     Write-Host ""
     if (-not $running) {
-        Write-Fail "Docker daemon did not start after 60 seconds.`n  Start Docker Desktop manually and re-run this script."
+        Write-Fail "Docker daemon did not start after 2 minutes.`n  Start Docker Desktop manually and re-run this script."
     }
 }
 Write-Ok "Docker daemon is running"
