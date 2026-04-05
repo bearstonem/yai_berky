@@ -2071,7 +2071,8 @@ function connectSelfImproveStream() {
         } else if (event === 'cycle_end') {
           const el = document.createElement('div');
           el.className = 'msg msg-resume-indicator';
-          el.textContent = '--- Cycle complete. Next cycle in 5 minutes. ---';
+          const mins = parseInt(localStorage.getItem('helm-evolve-interval')) || 5;
+          el.textContent = '--- Cycle complete. Next cycle in ' + mins + ' minute' + (mins === 1 ? '' : 's') + '. ---';
           log.appendChild(el);
           loadSelfImproveGoals();
           // Update cycle badge
