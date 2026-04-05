@@ -119,16 +119,16 @@ if (-not $ccFound) {
         }
         Write-Ok "Installed MSYS2"
 
-        # Install gcc inside MSYS2
+        # Install gcc and sqlite3 headers inside MSYS2
         $msys2Bash = "C:\msys64\usr\bin\bash.exe"
         if (Test-Path $msys2Bash) {
-            Write-Info "Installing MinGW-w64 GCC via MSYS2 pacman..."
-            & $msys2Bash -lc "pacman -S --noconfirm mingw-w64-ucrt-x86_64-gcc" 2>&1 | Out-Null
+            Write-Info "Installing MinGW-w64 GCC and SQLite3 headers via MSYS2 pacman..."
+            & $msys2Bash -lc "pacman -S --noconfirm mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-sqlite3" 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
-                Write-Ok "Installed mingw-w64-ucrt-x86_64-gcc"
+                Write-Ok "Installed mingw-w64-ucrt-x86_64-gcc and sqlite3 headers"
             } else {
                 Write-Warn "pacman install failed. You may need to run manually:"
-                Write-Host "    C:\msys64\usr\bin\bash.exe -lc 'pacman -S --noconfirm mingw-w64-ucrt-x86_64-gcc'"
+                Write-Host "    C:\msys64\usr\bin\bash.exe -lc 'pacman -S --noconfirm mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-sqlite3'"
             }
         }
 
@@ -150,6 +150,28 @@ if (-not $ccFound) {
     }
 }
 
+# SQLite3 development headers (required by sqlite-vec CGO binding)
+$sqlite3HeaderFound = $false
+$ucrt64Include = "C:\msys64\ucrt64\include"
+if (Test-Path (Join-Path $ucrt64Include "sqlite3.h")) {
+    Write-Ok "SQLite3 development headers"
+    $sqlite3HeaderFound = $true
+} else {
+    # Try to install via MSYS2 pacman
+    $msys2Bash = "C:\msys64\usr\bin\bash.exe"
+    if (Test-Path $msys2Bash) {
+        Write-Warn "SQLite3 headers not found. Installing via MSYS2 pacman..."
+        & $msys2Bash -lc "pacman -S --noconfirm mingw-w64-ucrt-x86_64-sqlite3" 2>&1 | Out-Null
+        if (($LASTEXITCODE -eq 0) -and (Test-Path (Join-Path $ucrt64Include "sqlite3.h"))) {
+            Write-Ok "Installed SQLite3 development headers"
+            $sqlite3HeaderFound = $true
+        }
+    }
+    if (-not $sqlite3HeaderFound) {
+        Write-Fail "SQLite3 development headers not found.`n  Run: C:\msys64\usr\bin\bash.exe -lc 'pacman -S --noconfirm mingw-w64-ucrt-x86_64-sqlite3'`n  Then re-run this script."
+    }
+}
+
 # ── Build ────────────────────────────────────────────────────────────
 
 Write-Info "Building Helm from source"
@@ -157,6 +179,14 @@ Write-Info "Building Helm from source"
 Push-Location $ScriptDir
 try {
     $env:CGO_ENABLED = "1"
+
+    # Point CGO at MSYS2 ucrt64 headers and libraries so sqlite-vec can find sqlite3.h
+    $ucrt64Base = "C:\msys64\ucrt64"
+    if (Test-Path (Join-Path $ucrt64Base "include\sqlite3.h")) {
+        $env:CGO_CFLAGS  = "-I$ucrt64Base\include"
+        $env:CGO_LDFLAGS = "-L$ucrt64Base\lib"
+    }
+
     & go build -ldflags="-s -w" -o $BinaryName .
     if ($LASTEXITCODE -ne 0) {
         Write-Fail "Build failed (exit code $LASTEXITCODE)"
