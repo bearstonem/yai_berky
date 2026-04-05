@@ -62,6 +62,7 @@
         <h1>Primary Agent</h1>
         <span class="page-desc">Give tasks, watch the AI work autonomously</span>
         <button class="new-chat-btn" onclick="newAgentTask()" title="Start a new task">+ New Task</button>
+        <button class="self-improve-btn" id="self-improve-btn" onclick="toggleSelfImprove()" title="Start autonomous self-improvement loop">&#x1F504; Self-Improve</button>
         <button class="deleg-toggle-btn" id="deleg-toggle" onclick="toggleDelegationPanel()" title="Show delegation flow">&#x269B; Flow</button>
         <select id="agent-profile-select" class="profile-select" onchange="onAgentProfileChange()">
           <option value="">Primary Agent</option>
@@ -69,6 +70,15 @@
       </div>
       <div id="agent-profile-info" class="profile-info hidden"></div>
       <div id="agent-status-panel" class="agent-status-panel hidden"></div>
+      <div id="self-improve-panel" class="self-improve-panel hidden">
+        <div class="si-header">
+          <span id="si-status-text">&#x1F504; Self-Improvement Loop</span>
+          <span id="si-cycle-badge" class="si-cycle-badge">Cycle 0</span>
+          <button class="card-btn danger" onclick="stopSelfImprove()" style="margin-left:auto">Stop</button>
+        </div>
+        <div id="si-goals" class="si-goals"></div>
+        <div id="si-log" class="message-area si-log"></div>
+      </div>
       <div id="agent-messages" class="message-area"></div>
       <div class="input-bar">
         <textarea id="agent-input" placeholder="Describe a task..." rows="1"

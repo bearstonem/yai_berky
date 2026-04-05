@@ -14,9 +14,15 @@ import (
 	"runtime"
 	"time"
 
+	"context"
+	"os"
+	"path/filepath"
+
 	"github.com/bearstonem/helm/agent"
+	"github.com/bearstonem/helm/backup"
 	"github.com/bearstonem/helm/ai"
 	"github.com/bearstonem/helm/config"
+	"github.com/bearstonem/helm/goal"
 	"github.com/bearstonem/helm/memory"
 	"github.com/bearstonem/helm/session"
 	"github.com/bearstonem/helm/skill"
@@ -28,20 +34,28 @@ var staticFiles embed.FS
 // Server is the Helm web GUI server.
 type Server struct {
 	homeDir      string
+	sourceDir    string // app source directory (where go.mod lives)
 	config       *config.Config
 	engine       *ai.Engine
 	addr         string
-	activeEngine *ai.Engine // currently running agent engine (for escalation responses)
-	mu           sync.Mutex
+	activeEngine        *ai.Engine // currently running agent engine (for escalation responses)
+	mu                  sync.Mutex
+	selfImproveRunning  bool
+	selfImproveCycle    int
+	selfImproveCancel   context.CancelFunc
+	selfImproveEngine   *ai.Engine
+	selfImproveChan     chan ai.AgentEvent
+	selfImproveInterval time.Duration
 }
 
 // NewServer creates a new web server.
-func NewServer(cfg *config.Config, engine *ai.Engine, homeDir string, port int) *Server {
+func NewServer(cfg *config.Config, engine *ai.Engine, homeDir string, sourceDir string, port int) *Server {
 	return &Server{
-		homeDir: homeDir,
-		config:  cfg,
-		engine:  engine,
-		addr:    fmt.Sprintf("127.0.0.1:%d", port),
+		homeDir:   homeDir,
+		sourceDir: sourceDir,
+		config:    cfg,
+		engine:    engine,
+		addr:      fmt.Sprintf("127.0.0.1:%d", port),
 	}
 }
 
@@ -65,6 +79,12 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/chat", s.corsWrap(s.handleChat))
 	mux.HandleFunc("/api/agent", s.corsWrap(s.handleAgent))
 	mux.HandleFunc("/api/agent/respond", s.corsWrap(s.handleAgentRespond))
+	mux.HandleFunc("/api/goals", s.corsWrap(s.handleGoals))
+	mux.HandleFunc("/api/goals/", s.corsWrap(s.handleGoalByID))
+	mux.HandleFunc("/api/self-improve/start", s.corsWrap(s.handleSelfImproveStart))
+	mux.HandleFunc("/api/self-improve/stop", s.corsWrap(s.handleSelfImproveStop))
+	mux.HandleFunc("/api/self-improve/status", s.corsWrap(s.handleSelfImproveStatus))
+	mux.HandleFunc("/api/self-improve/stream", s.corsWrap(s.handleSelfImproveStream))
 
 	// Static files
 	staticFS, err := fs.Sub(staticFiles, "static")
@@ -80,6 +100,16 @@ func (s *Server) Start() error {
 
 	url := fmt.Sprintf("http://%s", listener.Addr().String())
 	fmt.Printf("Helm GUI running at %s\n", url)
+
+	// Write PID file for restart script
+	pidFile := filepath.Join(backup.BackupsDir(s.homeDir), "helm.pid")
+	os.MkdirAll(backup.BackupsDir(s.homeDir), 0755)
+	os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644)
+
+	// Generate restart script
+	port := listener.Addr().(*net.TCPAddr).Port
+	binaryPath, _ := os.Executable()
+	backup.GenerateRestartScript(s.homeDir, s.sourceDir, binaryPath, port)
 
 	// Open browser
 	go func() {
@@ -829,6 +859,353 @@ func (s *Server) handleBuilder(w http.ResponseWriter, r *http.Request, systemPro
 	s.jsonResponse(w, map[string]string{"content": content})
 }
 
+// --- Goals ---
+
+func (s *Server) handleGoals(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		goals, err := goal.LoadAll(s.homeDir)
+		if err != nil {
+			s.jsonError(w, err.Error(), 500)
+			return
+		}
+		if goals == nil {
+			goals = []goal.Goal{}
+		}
+		s.jsonResponse(w, goals)
+
+	case "POST":
+		var g goal.Goal
+		if err := json.NewDecoder(r.Body).Decode(&g); err != nil {
+			s.jsonError(w, "invalid JSON: "+err.Error(), 400)
+			return
+		}
+		if err := goal.Save(s.homeDir, &g); err != nil {
+			s.jsonError(w, err.Error(), 500)
+			return
+		}
+		w.WriteHeader(201)
+		s.jsonResponse(w, g)
+
+	default:
+		s.jsonError(w, "method not allowed", 405)
+	}
+}
+
+func (s *Server) handleGoalByID(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Path[len("/api/goals/"):]
+	if id == "" {
+		s.jsonError(w, "missing goal ID", 400)
+		return
+	}
+
+	switch r.Method {
+	case "GET":
+		g, err := goal.Load(s.homeDir, id)
+		if err != nil {
+			s.jsonError(w, err.Error(), 404)
+			return
+		}
+		s.jsonResponse(w, g)
+
+	case "PUT":
+		var g goal.Goal
+		if err := json.NewDecoder(r.Body).Decode(&g); err != nil {
+			s.jsonError(w, "invalid JSON: "+err.Error(), 400)
+			return
+		}
+		g.ID = id
+		if err := goal.Save(s.homeDir, &g); err != nil {
+			s.jsonError(w, err.Error(), 500)
+			return
+		}
+		s.jsonResponse(w, g)
+
+	case "DELETE":
+		if err := goal.Delete(s.homeDir, id); err != nil {
+			s.jsonError(w, err.Error(), 404)
+			return
+		}
+		s.jsonResponse(w, map[string]string{"status": "deleted"})
+
+	default:
+		s.jsonError(w, "method not allowed", 405)
+	}
+}
+
+// --- Self-Improvement Loop ---
+
+var selfImprovePrompt = "You are Helm's self-improvement agent. You run periodically to make the platform better.\n\n" +
+	"## Your Mission This Cycle\n\n" +
+	"1. **REVIEW GOALS**: Use `list_goals` to check current goals. If none exist, create 2-3 foundational goals (e.g. expand skill set, improve agent coverage, ensure skill reliability).\n\n" +
+	"2. **REVIEW CAPABILITIES**: Use `list_skills` to see current skills. Use `list_directory` to review agent profiles in ~/.config/helm/agents/.\n\n" +
+	"3. **IDENTIFY GAPS**: Think about what skills and agents would make the platform more useful. Consider: API integrations, data processing, DevOps automation, code quality tools, monitoring, etc.\n\n" +
+	"4. **IMPROVE OR CREATE**: Pick ONE actionable item and execute it well:\n" +
+	"   - Create a new skill using `create_skill` (write the full script, test it with `run_command`)\n" +
+	"   - Create a new agent using `create_agent` for an uncovered domain\n" +
+	"   - Improve an existing skill by reading its script with `read_file` and rewriting it\n\n" +
+	"5. **TEST**: After creating or modifying anything, test it to verify it works.\n\n" +
+	"6. **UPDATE GOALS**: Use `update_goal` to log what you accomplished. Create new goals for future cycles.\n\n" +
+	"7. **REPORT**: Summarize what you accomplished this cycle.\n\n" +
+	"Be methodical. Do ONE thing well rather than many things poorly. Each cycle should make measurable progress.\n" +
+	"NEVER start long-running processes (dev servers, watchers). Only use short-lived commands.\n\n" +
+	"## CODE CHANGES & RESTART\n" +
+	"Your application source is automatically backed up before each cycle.\n" +
+	"If you modify Go source code (.go files), you MUST call `restart_helm` afterward to rebuild and relaunch.\n" +
+	"The restart script will: kill current process → rebuild → relaunch.\n" +
+	"If the build fails, the latest backup is automatically restored and relaunched.\n" +
+	"This is safe — you can experiment with code changes knowing the backup protects against broken builds.\n"
+
+func (s *Server) handleSelfImproveStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		s.jsonError(w, "method not allowed", 405)
+		return
+	}
+
+	s.mu.Lock()
+	if s.selfImproveRunning {
+		s.mu.Unlock()
+		s.jsonError(w, "self-improvement loop already running", 409)
+		return
+	}
+
+	var req struct {
+		IntervalMinutes int `json:"interval_minutes"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if req.IntervalMinutes <= 0 {
+		req.IntervalMinutes = 5
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.selfImproveRunning = true
+	s.selfImproveCancel = cancel
+	s.selfImproveCycle = 0
+	s.selfImproveInterval = time.Duration(req.IntervalMinutes) * time.Minute
+	s.selfImproveChan = make(chan ai.AgentEvent, 100)
+	s.mu.Unlock()
+
+	go s.selfImproveLoop(ctx)
+
+	s.jsonResponse(w, map[string]interface{}{
+		"status":           "started",
+		"interval_minutes": req.IntervalMinutes,
+	})
+}
+
+func (s *Server) handleSelfImproveStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		s.jsonError(w, "method not allowed", 405)
+		return
+	}
+
+	s.mu.Lock()
+	if !s.selfImproveRunning {
+		s.mu.Unlock()
+		s.jsonError(w, "not running", 404)
+		return
+	}
+	s.selfImproveCancel()
+	s.selfImproveRunning = false
+	s.mu.Unlock()
+
+	s.jsonResponse(w, map[string]string{"status": "stopped"})
+}
+
+func (s *Server) handleSelfImproveStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		s.jsonError(w, "method not allowed", 405)
+		return
+	}
+
+	s.mu.Lock()
+	status := map[string]interface{}{
+		"running":          s.selfImproveRunning,
+		"cycle":            s.selfImproveCycle,
+		"interval_minutes": int(s.selfImproveInterval.Minutes()),
+	}
+	s.mu.Unlock()
+
+	s.jsonResponse(w, status)
+}
+
+func (s *Server) handleSelfImproveStream(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	ch := s.selfImproveChan
+	s.mu.Unlock()
+
+	if ch == nil {
+		s.jsonError(w, "not running", 404)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		s.jsonError(w, "streaming not supported", 500)
+		return
+	}
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-ch:
+			if !ok {
+				sseEvent(w, flusher, "done", "loop stopped")
+				return
+			}
+			switch event.Type {
+			case ai.AgentEventThinking:
+				payload := map[string]string{"content": event.Content}
+				if event.AgentID != "" {
+					payload["agent_id"] = event.AgentID
+					payload["agent_name"] = event.AgentName
+				}
+				data, _ := json.Marshal(payload)
+				sseEvent(w, flusher, "thinking", string(data))
+			case ai.AgentEventToolCall:
+				if event.ToolCall != nil {
+					payload := map[string]string{"name": event.ToolCall.Name, "arguments": event.ToolCall.Arguments}
+					if event.AgentID != "" {
+						payload["agent_id"] = event.AgentID
+						payload["agent_name"] = event.AgentName
+					}
+					data, _ := json.Marshal(payload)
+					sseEvent(w, flusher, "tool_call", string(data))
+				}
+			case ai.AgentEventToolResult:
+				if event.ToolResult != nil {
+					content := event.ToolResult.Content
+					if len(content) > 2000 {
+						content = content[:2000] + "..."
+					}
+					payload := map[string]string{"content": content}
+					data, _ := json.Marshal(payload)
+					sseEvent(w, flusher, "tool_result", string(data))
+				}
+			case ai.AgentEventAnswer:
+				payload := map[string]string{"content": event.Content}
+				data, _ := json.Marshal(payload)
+				sseEvent(w, flusher, "answer", string(data))
+			case ai.AgentEventSubAgentStart:
+				data, _ := json.Marshal(map[string]string{"agent_id": event.AgentID, "agent_name": event.AgentName, "task": event.Content})
+				sseEvent(w, flusher, "sub_agent_start", string(data))
+			case ai.AgentEventSubAgentDone:
+				data, _ := json.Marshal(map[string]string{"agent_id": event.AgentID, "agent_name": event.AgentName, "status": event.Content})
+				sseEvent(w, flusher, "sub_agent_done", string(data))
+			case ai.AgentEventError:
+				if event.Error != nil {
+					sseEvent(w, flusher, "error", event.Error.Error())
+				}
+			case ai.AgentEventDone:
+				sseEvent(w, flusher, "cycle_end", "")
+			}
+		}
+	}
+}
+
+func (s *Server) selfImproveLoop(ctx context.Context) {
+	defer func() {
+		s.mu.Lock()
+		s.selfImproveRunning = false
+		if s.selfImproveChan != nil {
+			close(s.selfImproveChan)
+			s.selfImproveChan = nil
+		}
+		s.mu.Unlock()
+	}()
+
+	// Run first cycle immediately
+	s.runSelfImproveCycle(ctx)
+
+	ticker := time.NewTicker(s.selfImproveInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.runSelfImproveCycle(ctx)
+		}
+	}
+}
+
+func (s *Server) runSelfImproveCycle(ctx context.Context) {
+	s.mu.Lock()
+	s.selfImproveCycle++
+	cycle := s.selfImproveCycle
+	ch := s.selfImproveChan
+	s.mu.Unlock()
+
+	if ch == nil {
+		return
+	}
+
+	// Back up the application before making changes
+	reason := fmt.Sprintf("self-improvement cycle %d", cycle)
+	entry, backupErr := backup.Create(s.homeDir, s.sourceDir, reason)
+	if backupErr != nil {
+		select {
+		case ch <- ai.AgentEvent{Type: ai.AgentEventThinking, Content: fmt.Sprintf("Warning: backup failed: %s", backupErr)}:
+		default:
+		}
+	} else {
+		select {
+		case ch <- ai.AgentEvent{Type: ai.AgentEventThinking, Content: fmt.Sprintf("=== Self-Improvement Cycle %d (backed up: %s) ===", cycle, entry.ID)}:
+		default:
+		}
+	}
+
+	engine, err := ai.NewEngine(ai.AgentEngineMode, s.config)
+	if err != nil {
+		select {
+		case ch <- ai.AgentEvent{Type: ai.AgentEventError, Error: err}:
+		default:
+		}
+		return
+	}
+	engine.StartNewSession()
+
+	s.mu.Lock()
+	s.selfImproveEngine = engine
+	s.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		engine.AgentCompletion(selfImprovePrompt, true)
+		close(engine.GetAgentChannel())
+		close(done)
+	}()
+
+	// Forward events to broadcast channel
+	agentCh := engine.GetAgentChannel()
+	for event := range agentCh {
+		select {
+		case ch <- event:
+		default: // drop if buffer full / no subscribers
+		}
+	}
+
+	<-done
+	engine.SaveSession(s.homeDir)
+
+	s.mu.Lock()
+	s.selfImproveEngine = nil
+	s.mu.Unlock()
+
+	// Emit cycle end
+	select {
+	case ch <- ai.AgentEvent{Type: ai.AgentEventDone}:
+	default:
+	}
+}
+
+// Update escalation to also check self-improve engine
 func (s *Server) handleAgentRespond(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		s.jsonError(w, "method not allowed", 405)
@@ -845,6 +1222,9 @@ func (s *Server) handleAgentRespond(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	engine := s.activeEngine
+	if engine == nil {
+		engine = s.selfImproveEngine
+	}
 	s.mu.Unlock()
 
 	if engine == nil {

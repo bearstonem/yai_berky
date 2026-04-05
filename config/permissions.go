@@ -86,6 +86,14 @@ func IsToolAllowed(toolName string, mode PermissionMode) bool {
 		if toolName == "create_agent" || toolName == "delegate_task" || toolName == "escalate_to_user" {
 			return mode >= PermWorkspaceWrite
 		}
+		// Goal management tools
+		if toolName == "list_goals" || toolName == "create_goal" || toolName == "update_goal" {
+			return mode >= PermWorkspaceWrite
+		}
+		// Restart requires full access (it kills the process)
+		if toolName == "restart_helm" {
+			return mode >= PermFullAccess
+		}
 		// Unknown tools require full access.
 		return mode >= PermFullAccess
 	}

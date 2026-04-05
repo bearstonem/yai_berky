@@ -11,6 +11,7 @@ import (
 
 	"github.com/bearstonem/helm/agent"
 	"github.com/bearstonem/helm/config"
+	"github.com/bearstonem/helm/goal"
 	"github.com/bearstonem/helm/hook"
 	"github.com/bearstonem/helm/integration"
 	"github.com/bearstonem/helm/run"
@@ -254,6 +255,68 @@ var escalateToUserSchema = json.RawMessage(`{
 	"required": ["question"]
 }`)
 
+var listGoalsSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {}
+}`)
+
+var createGoalSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"title": {
+			"type": "string",
+			"description": "Short title for the goal"
+		},
+		"description": {
+			"type": "string",
+			"description": "Detailed description of what this goal aims to achieve"
+		},
+		"priority": {
+			"type": "integer",
+			"description": "Priority: 1=high, 2=medium, 3=low"
+		}
+	},
+	"required": ["title", "description"]
+}`)
+
+var restartHelmSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"reason": {
+			"type": "string",
+			"description": "Brief description of why a restart is needed (e.g. 'updated engine code')"
+		}
+	},
+	"required": ["reason"]
+}`)
+
+var updateGoalSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"id": {
+			"type": "string",
+			"description": "ID of the goal to update"
+		},
+		"status": {
+			"type": "string",
+			"description": "New status: active, completed, or paused"
+		},
+		"progress": {
+			"type": "string",
+			"description": "Progress notes to append"
+		},
+		"title": {
+			"type": "string",
+			"description": "Updated title (optional)"
+		},
+		"description": {
+			"type": "string",
+			"description": "Updated description (optional)"
+		}
+	},
+	"required": ["id"]
+}`)
+
 func AgentTools() []Tool {
 	return []Tool{
 		{
@@ -321,6 +384,26 @@ func AgentTools() []Tool {
 			Description: "Pause and ask the user a question or request a decision. Use when you encounter ambiguity, need approval for a risky action, or lack information to proceed. The user will see your question and respond.",
 			Parameters:  escalateToUserSchema,
 		},
+		{
+			Name:        "list_goals",
+			Description: "List all current self-improvement goals with their status and progress.",
+			Parameters:  listGoalsSchema,
+		},
+		{
+			Name:        "create_goal",
+			Description: "Create a new goal to track progress toward an objective.",
+			Parameters:  createGoalSchema,
+		},
+		{
+			Name:        "update_goal",
+			Description: "Update a goal's status, progress notes, or details.",
+			Parameters:  updateGoalSchema,
+		},
+		{
+			Name:        "restart_helm",
+			Description: "Trigger a restart of the Helm application after making code changes. This kills the current process, rebuilds from source, and relaunches. If the build fails, the latest backup is automatically restored. Only use after modifying application source code.",
+			Parameters:  restartHelmSchema,
+		},
 	}
 }
 
@@ -337,6 +420,7 @@ type ToolExecutor struct {
 	onCreateAgent      func(name, description, systemPrompt string, tools []string) (string, error)
 	onDelegateTask     func(agentID, task, context string) (string, error)
 	onEscalateToUser   func(question, context string) (string, error)
+	onRestartHelm      func(reason string) (string, error)
 }
 
 func NewToolExecutor(allowSudo bool, homeDir string, workDir string, permMode config.PermissionMode) *ToolExecutor {
@@ -390,6 +474,10 @@ func (te *ToolExecutor) SetOnDelegateTask(fn func(agentID, task, context string)
 
 func (te *ToolExecutor) SetOnEscalateToUser(fn func(question, context string) (string, error)) {
 	te.onEscalateToUser = fn
+}
+
+func (te *ToolExecutor) SetOnRestartHelm(fn func(reason string) (string, error)) {
+	te.onRestartHelm = fn
 }
 
 func (te *ToolExecutor) findSkill(toolName string) *skill.Manifest {
@@ -509,6 +597,14 @@ func (te *ToolExecutor) Execute(tc ToolCall) ToolResult {
 		content = te.executeDelegateTask(tc.Arguments)
 	case "escalate_to_user":
 		content = te.executeEscalateToUser(tc.Arguments)
+	case "list_goals":
+		content = te.executeListGoals()
+	case "create_goal":
+		content = te.executeCreateGoal(tc.Arguments)
+	case "update_goal":
+		content = te.executeUpdateGoal(tc.Arguments)
+	case "restart_helm":
+		content = te.executeRestartHelm(tc.Arguments)
 	default:
 		// Check agent-as-tool calls (agent_*)
 		if strings.HasPrefix(tc.Name, "agent_") && te.onDelegateTask != nil {
@@ -1097,6 +1193,101 @@ func (te *ToolExecutor) executeEscalateToUser(argsJSON string) string {
 		return fmt.Sprintf("error escalating: %s", err)
 	}
 	return fmt.Sprintf("User responded: %s", response)
+}
+
+func (te *ToolExecutor) executeListGoals() string {
+	goals, err := goal.LoadAll(te.homeDir)
+	if err != nil {
+		return fmt.Sprintf("error loading goals: %s", err)
+	}
+	if len(goals) == 0 {
+		return "No goals exist yet. Create some with create_goal."
+	}
+	data, _ := json.MarshalIndent(goals, "", "  ")
+	return string(data)
+}
+
+func (te *ToolExecutor) executeCreateGoal(argsJSON string) string {
+	var args struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Priority    int    `json:"priority"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+	if args.Title == "" {
+		return "error: title is required"
+	}
+	if args.Priority == 0 {
+		args.Priority = 2
+	}
+	g := &goal.Goal{
+		Title:       args.Title,
+		Description: args.Description,
+		Priority:    args.Priority,
+	}
+	if err := goal.Save(te.homeDir, g); err != nil {
+		return fmt.Sprintf("error creating goal: %s", err)
+	}
+	return fmt.Sprintf("Goal %q created (id: %s, priority: %d).", g.Title, g.ID, g.Priority)
+}
+
+func (te *ToolExecutor) executeUpdateGoal(argsJSON string) string {
+	var args struct {
+		ID          string `json:"id"`
+		Status      string `json:"status"`
+		Progress    string `json:"progress"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+	if args.ID == "" {
+		return "error: id is required"
+	}
+	g, err := goal.Load(te.homeDir, args.ID)
+	if err != nil {
+		return fmt.Sprintf("error loading goal: %s", err)
+	}
+	if args.Status != "" {
+		g.Status = args.Status
+	}
+	if args.Progress != "" {
+		if g.Progress != "" {
+			g.Progress += "\n" + args.Progress
+		} else {
+			g.Progress = args.Progress
+		}
+	}
+	if args.Title != "" {
+		g.Title = args.Title
+	}
+	if args.Description != "" {
+		g.Description = args.Description
+	}
+	if err := goal.Save(te.homeDir, g); err != nil {
+		return fmt.Sprintf("error updating goal: %s", err)
+	}
+	return fmt.Sprintf("Goal %q updated (status: %s).", g.Title, g.Status)
+}
+
+func (te *ToolExecutor) executeRestartHelm(argsJSON string) string {
+	var args struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("error parsing arguments: %s", err)
+	}
+	if te.onRestartHelm == nil {
+		return "error: restart not available in this context"
+	}
+	result, err := te.onRestartHelm(args.Reason)
+	if err != nil {
+		return fmt.Sprintf("error: %s", err)
+	}
+	return result
 }
 
 func formatCapturedOutput(output *run.CapturedOutput) string {

@@ -1921,6 +1921,213 @@ async function editBuilderResult() {
   }
 }
 
+// --- Self-Improvement Loop ---
+
+let selfImproveRunning = false;
+let selfImproveAbort = null; // AbortController for the SSE stream
+
+async function toggleSelfImprove() {
+  if (selfImproveRunning) {
+    stopSelfImprove();
+  } else {
+    startSelfImprove();
+  }
+}
+
+async function startSelfImprove() {
+  try {
+    const res = await fetch(API + '/api/self-improve/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ interval_minutes: 5 })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      alert('Error: ' + (err.error || 'Failed to start'));
+      return;
+    }
+  } catch(e) {
+    alert('Error: ' + e.message);
+    return;
+  }
+
+  selfImproveRunning = true;
+  document.getElementById('self-improve-btn').textContent = '⏹ Stop Loop';
+  document.getElementById('self-improve-btn').classList.add('running');
+  document.getElementById('self-improve-panel').classList.remove('hidden');
+  document.getElementById('si-log').innerHTML = '';
+
+  loadSelfImproveGoals();
+  connectSelfImproveStream();
+}
+
+async function stopSelfImprove() {
+  await fetch(API + '/api/self-improve/stop', { method: 'POST' }).catch(() => {});
+  selfImproveRunning = false;
+  document.getElementById('self-improve-btn').textContent = '🔄 Self-Improve';
+  document.getElementById('self-improve-btn').classList.remove('running');
+  if (selfImproveAbort) {
+    selfImproveAbort.abort();
+    selfImproveAbort = null;
+  }
+}
+
+function connectSelfImproveStream() {
+  selfImproveAbort = new AbortController();
+  const log = document.getElementById('si-log');
+
+  fetch(API + '/api/self-improve/stream', { signal: selfImproveAbort.signal })
+    .then(response => {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let currentEvent = '';
+      let dataLines = [];
+      let doneFired = false;
+
+      function processEvent(event, data) {
+        if (event === 'thinking') {
+          try {
+            const info = JSON.parse(data);
+            const tag = info.agent_name ? agentTag(info.agent_name) : '';
+            const el = document.createElement('div');
+            el.className = 'msg msg-thinking';
+            el.innerHTML = tag + escapeHtml(truncate(info.content || data, 300));
+            log.appendChild(el);
+          } catch(e) {
+            addMessageTo(log, data, 'thinking');
+          }
+        } else if (event === 'tool_call') {
+          try {
+            const tc = JSON.parse(data);
+            const tag = tc.agent_name ? agentTag(tc.agent_name) : '';
+            const el = document.createElement('div');
+            el.className = 'msg msg-tool';
+            el.innerHTML = tag + '<div class="tool-name">' + escapeHtml(tc.name) + '</div>' +
+              '<div>' + escapeHtml(truncate(tc.arguments, 200)) + '</div>';
+            log.appendChild(el);
+          } catch(e) {}
+        } else if (event === 'tool_result') {
+          try {
+            const info = JSON.parse(data);
+            const el = document.createElement('div');
+            el.className = 'msg msg-tool';
+            el.innerHTML = '<div class="tool-result">' + escapeHtml(truncate(info.content || data, 300)) + '</div>';
+            log.appendChild(el);
+          } catch(e) {}
+        } else if (event === 'answer') {
+          try {
+            const info = JSON.parse(data);
+            renderFormattedResponse(log, info.content || data);
+          } catch(e) {
+            renderFormattedResponse(log, data);
+          }
+        } else if (event === 'cycle_end') {
+          const el = document.createElement('div');
+          el.className = 'msg msg-resume-indicator';
+          el.textContent = '--- Cycle complete. Next cycle in 5 minutes. ---';
+          log.appendChild(el);
+          loadSelfImproveGoals();
+          // Update cycle badge
+          fetch(API + '/api/self-improve/status').then(r => r.json()).then(s => {
+            document.getElementById('si-cycle-badge').textContent = 'Cycle ' + s.cycle;
+          }).catch(() => {});
+        } else if (event === 'error') {
+          addMessageTo(log, 'Error: ' + data, 'error');
+        } else if (event === 'sub_agent_start') {
+          try {
+            const info = JSON.parse(data);
+            const el = document.createElement('div');
+            el.className = 'msg msg-sub-agent-start';
+            el.innerHTML = '<strong>' + escapeHtml(info.agent_name) + '</strong> started: ' + escapeHtml(truncate(info.task, 100));
+            log.appendChild(el);
+          } catch(e) {}
+        } else if (event === 'sub_agent_done') {
+          try {
+            const info = JSON.parse(data);
+            const el = document.createElement('div');
+            el.className = 'msg msg-sub-agent-done';
+            el.innerHTML = '<strong>' + escapeHtml(info.agent_name) + '</strong> ' + escapeHtml(info.status);
+            log.appendChild(el);
+          } catch(e) {}
+        } else if (event === 'escalation') {
+          try {
+            const info = JSON.parse(data);
+            const el = document.createElement('div');
+            el.className = 'msg msg-escalation';
+            const tag = info.agent_name ? agentTag(info.agent_name) : '';
+            el.innerHTML = tag +
+              '<div class="escalation-question">' + escapeHtml(info.question) + '</div>' +
+              '<div class="escalation-input">' +
+              '<input type="text" class="escalation-field" placeholder="Type your response..." ' +
+              'onkeydown="if(event.key===\'Enter\')respondToEscalation(this)">' +
+              '<button class="action-btn" onclick="respondToEscalation(this.previousElementSibling)">Respond</button>' +
+              '</div>';
+            log.appendChild(el);
+          } catch(e) {}
+        }
+        log.scrollTop = log.scrollHeight;
+      }
+
+      function read() {
+        reader.read().then(({ done, value }) => {
+          if (done) return;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              currentEvent = line.slice(7);
+              dataLines = [];
+            } else if (line.startsWith('data: ')) {
+              dataLines.push(line.slice(6));
+            } else if (line === '' && currentEvent) {
+              processEvent(currentEvent, dataLines.join('\n'));
+              currentEvent = '';
+              dataLines = [];
+            }
+          }
+          read();
+        }).catch(() => {});
+      }
+      read();
+    }).catch(() => {});
+}
+
+async function loadSelfImproveGoals() {
+  try {
+    const res = await fetch(API + '/api/goals');
+    const goals = await res.json();
+    const container = document.getElementById('si-goals');
+    if (goals.length === 0) {
+      container.innerHTML = '<span style="font-size:11px;color:var(--text-dimmer)">No goals yet — agent will create them</span>';
+      return;
+    }
+    container.innerHTML = goals.map(g => {
+      const cls = g.status === 'completed' ? 'completed' : g.status === 'paused' ? 'paused' : 'active';
+      return '<span class="si-goal-chip ' + cls + '" title="' + escapeHtml(g.description || '') + '">' +
+        escapeHtml(g.title) + '</span>';
+    }).join('');
+  } catch(e) {}
+}
+
+// Check if self-improve is already running on page load
+async function checkSelfImproveStatus() {
+  try {
+    const res = await fetch(API + '/api/self-improve/status');
+    const status = await res.json();
+    if (status.running) {
+      selfImproveRunning = true;
+      document.getElementById('self-improve-btn').textContent = '⏹ Stop Loop';
+      document.getElementById('self-improve-btn').classList.add('running');
+      document.getElementById('self-improve-panel').classList.remove('hidden');
+      document.getElementById('si-cycle-badge').textContent = 'Cycle ' + status.cycle;
+      loadSelfImproveGoals();
+      connectSelfImproveStream();
+    }
+  } catch(e) {}
+}
+
 // --- Themes ---
 
 const THEME_ICONS = {
@@ -1992,3 +2199,4 @@ function applyThemeIcons(themeId) {
 loadSavedTheme();
 loadMemoryStats();
 loadConfig().catch(() => {});
+checkSelfImproveStatus();
