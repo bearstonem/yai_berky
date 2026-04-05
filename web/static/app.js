@@ -8,6 +8,114 @@ let allAgents = [];
 let allSkills = [];
 let allSessions = [];
 
+// --- Workspace ---
+
+async function loadWorkspace() {
+  try {
+    const res = await fetch(API + '/api/workspace');
+    const ws = await res.json();
+    const el = document.getElementById('topbar-workspace');
+    el.textContent = ws.path || 'No workspace';
+    el.title = ws.path || 'Click to change workspace';
+  } catch(e) {
+    document.getElementById('topbar-workspace').textContent = 'Error loading workspace';
+  }
+}
+
+function showWorkspacePicker() {
+  document.getElementById('workspace-modal').classList.remove('hidden');
+  browseWorkspace('');
+}
+
+function closeWorkspaceModal() {
+  document.getElementById('workspace-modal').classList.add('hidden');
+}
+
+async function browseWorkspace(path) {
+  const url = path ? API + '/api/workspace/browse?path=' + encodeURIComponent(path) : API + '/api/workspace/browse';
+  const res = await fetch(url);
+  const data = await res.json();
+
+  document.getElementById('workspace-path-display').textContent = data.current;
+  document.getElementById('workspace-path-input').value = data.current;
+
+  // Recents
+  const recentsEl = document.getElementById('workspace-recents');
+  if (data.recents && data.recents.length > 0) {
+    recentsEl.innerHTML = '<label style="font-size:0.85em;color:var(--text-dim);margin-bottom:4px;display:block">Recent Workspaces</label>' +
+      data.recents.map(r =>
+        '<div class="ws-recent" onclick="selectWorkspace(\'' + escapeHtml(r.replace(/\\/g, '\\\\')) + '\')">' +
+        '<span>&#x1F4C2;</span> ' + escapeHtml(r) + '</div>'
+      ).join('');
+  } else {
+    recentsEl.innerHTML = '';
+  }
+
+  // Directory browser
+  const browserEl = document.getElementById('workspace-browser');
+  if (!data.entries || data.entries.length === 0) {
+    browserEl.innerHTML = '<div style="padding:12px;color:var(--text-dim)">No subdirectories</div>';
+    return;
+  }
+
+  browserEl.innerHTML = data.entries.map(e => {
+    const icon = e.name === '..' ? '&#x2B06;' : (e.is_git ? '&#x1F4E6;' : '&#x1F4C1;');
+    return '<div class="ws-entry" onclick="' + (e.name === '..' ? 'browseWorkspace(\'' + escapeHtml(e.path.replace(/\\/g, '\\\\')) + '\')' : 'browseWorkspace(\'' + escapeHtml(e.path.replace(/\\/g, '\\\\')) + '\')') + '">' +
+      '<span class="ws-entry-icon">' + icon + '</span>' +
+      '<span class="ws-entry-name">' + escapeHtml(e.name) + '</span>' +
+      (e.is_git ? '<span class="ws-entry-git">git</span>' : '') +
+      (e.name !== '..' ? '<button class="ws-entry-select" onclick="event.stopPropagation();selectWorkspace(\'' + escapeHtml(e.path.replace(/\\/g, '\\\\')) + '\')">Select</button>' : '') +
+    '</div>';
+  }).join('');
+}
+
+async function selectWorkspace(path) {
+  const res = await fetch(API + '/api/workspace', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path })
+  });
+  if (res.ok) {
+    closeWorkspaceModal();
+    loadWorkspace();
+  } else {
+    const err = await res.json();
+    alert('Error: ' + (err.error || 'Failed to set workspace'));
+  }
+}
+
+async function setWorkspaceFromInput() {
+  const path = document.getElementById('workspace-path-input').value.trim();
+  if (path) selectWorkspace(path);
+}
+
+async function createNewWorkspace() {
+  const currentPath = document.getElementById('workspace-path-display').textContent;
+  const name = prompt('New folder name:', 'new-project');
+  if (!name) return;
+
+  const sep = currentPath.includes('\\') ? '\\' : '/';
+  const newPath = currentPath + (currentPath.endsWith(sep) ? '' : sep) + name;
+
+  const res = await fetch(API + '/api/workspace', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: newPath, create: true })
+  });
+
+  if (!res.ok) {
+    const err = await res.json();
+    alert('Error: ' + (err.error || 'Failed to create directory'));
+    return;
+  }
+
+  closeWorkspaceModal();
+  loadWorkspace();
+}
+
+// Load workspace on startup
+document.addEventListener('DOMContentLoaded', loadWorkspace);
+
 // --- Page Navigation ---
 
 function switchPage(page) {

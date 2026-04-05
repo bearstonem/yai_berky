@@ -107,6 +107,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/self-improve/status", s.corsWrap(s.handleSelfImproveStatus))
 	mux.HandleFunc("/api/self-improve/stream", s.corsWrap(s.handleSelfImproveStream))
 	mux.HandleFunc("/api/self-improve/reviews", s.corsWrap(s.handleEvolutionReviews))
+	mux.HandleFunc("/api/workspace", s.corsWrap(s.handleWorkspace))
+	mux.HandleFunc("/api/workspace/browse", s.corsWrap(s.handleWorkspaceBrowse))
 	mux.HandleFunc("/api/cron", s.corsWrap(s.handleCronJobs))
 	mux.HandleFunc("/api/cron/", s.corsWrap(s.handleCronJobByID))
 	mux.HandleFunc("/api/cron/scheduler", s.corsWrap(s.handleCronScheduler))
@@ -970,6 +972,160 @@ func (s *Server) handleGoalByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.jsonError(w, "method not allowed", 405)
 	}
+}
+
+// --- Workspace ---
+
+func (s *Server) handleWorkspace(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		workDir := s.engine.GetToolExecutor().GetWorkDir()
+		s.jsonResponse(w, map[string]string{
+			"path": workDir,
+			"name": filepath.Base(workDir),
+		})
+
+	case "PUT":
+		var req struct {
+			Path   string `json:"path"`
+			Create bool   `json:"create"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			s.jsonError(w, "invalid JSON: "+err.Error(), 400)
+			return
+		}
+		if req.Path == "" {
+			s.jsonError(w, "path is required", 400)
+			return
+		}
+
+		// Create directory if requested
+		if req.Create {
+			if err := os.MkdirAll(req.Path, 0755); err != nil {
+				s.jsonError(w, "failed to create directory: "+err.Error(), 400)
+				return
+			}
+		}
+
+		// Validate path exists and is a directory
+		info, err := os.Stat(req.Path)
+		if err != nil {
+			s.jsonError(w, "path does not exist: "+err.Error(), 400)
+			return
+		}
+		if !info.IsDir() {
+			s.jsonError(w, "path is not a directory", 400)
+			return
+		}
+
+		// Update workspace
+		s.engine.GetToolExecutor().SetWorkDir(req.Path)
+
+		// Save to recent workspaces
+		s.saveRecentWorkspace(req.Path)
+
+		s.jsonResponse(w, map[string]string{
+			"path": req.Path,
+			"name": filepath.Base(req.Path),
+		})
+
+	default:
+		s.jsonError(w, "method not allowed", 405)
+	}
+}
+
+func (s *Server) handleWorkspaceBrowse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		s.jsonError(w, "method not allowed", 405)
+		return
+	}
+
+	dir := r.URL.Query().Get("path")
+	if dir == "" {
+		dir = s.homeDir
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		s.jsonError(w, err.Error(), 400)
+		return
+	}
+
+	type entry struct {
+		Name  string `json:"name"`
+		Path  string `json:"path"`
+		IsDir bool   `json:"is_dir"`
+		IsGit bool   `json:"is_git"`
+	}
+
+	var dirs []entry
+	// Add parent directory
+	parent := filepath.Dir(dir)
+	if parent != dir {
+		dirs = append(dirs, entry{Name: "..", Path: parent, IsDir: true})
+	}
+
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		// Skip hidden dirs except .git
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		fullPath := filepath.Join(dir, name)
+		isGit := false
+		if _, err := os.Stat(filepath.Join(fullPath, ".git")); err == nil {
+			isGit = true
+		}
+		dirs = append(dirs, entry{Name: name, Path: fullPath, IsDir: true, IsGit: isGit})
+	}
+
+	// Load recent workspaces
+	recents := s.loadRecentWorkspaces()
+
+	s.jsonResponse(w, map[string]interface{}{
+		"current": dir,
+		"entries": dirs,
+		"recents": recents,
+	})
+}
+
+func (s *Server) recentWorkspacesPath() string {
+	return filepath.Join(s.homeDir, ".config", "helm", "recent_workspaces.json")
+}
+
+func (s *Server) loadRecentWorkspaces() []string {
+	data, err := os.ReadFile(s.recentWorkspacesPath())
+	if err != nil {
+		return nil
+	}
+	var recents []string
+	json.Unmarshal(data, &recents)
+	return recents
+}
+
+func (s *Server) saveRecentWorkspace(path string) {
+	recents := s.loadRecentWorkspaces()
+
+	// Remove if already present
+	filtered := make([]string, 0, len(recents)+1)
+	for _, r := range recents {
+		if r != path {
+			filtered = append(filtered, r)
+		}
+	}
+	// Prepend
+	filtered = append([]string{path}, filtered...)
+	// Keep max 10
+	if len(filtered) > 10 {
+		filtered = filtered[:10]
+	}
+
+	data, _ := json.Marshal(filtered)
+	os.MkdirAll(filepath.Dir(s.recentWorkspacesPath()), 0755)
+	os.WriteFile(s.recentWorkspacesPath(), data, 0644)
 }
 
 // --- Cron Jobs ---

@@ -322,6 +322,78 @@ body {
   padding: 4px 8px;
 }
 
+/* Global Top Bar */
+#global-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8em;
+  min-height: 28px;
+  flex-shrink: 0;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.topbar-label {
+  color: var(--text-dimmer);
+  white-space: nowrap;
+}
+
+.topbar-workspace {
+  color: var(--text);
+  font-family: monospace;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 500px;
+}
+
+.topbar-workspace:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.topbar-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 1em;
+}
+
+.topbar-btn:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+/* Content wrapper (topbar + main) */
+.content-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
 /* Main Content */
 #content {
   flex: 1;
@@ -329,6 +401,44 @@ body {
   flex-direction: column;
   overflow: hidden;
 }
+
+/* Workspace browser entries */
+.ws-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9em;
+}
+
+.ws-entry:hover { background: var(--bg-hover); }
+.ws-entry-icon { flex-shrink: 0; }
+.ws-entry-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-entry-git { color: var(--accent); font-size: 0.75em; }
+.ws-entry-select {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 2px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.8em;
+}
+
+.ws-recent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.85em;
+}
+
+.ws-recent:hover { background: var(--bg-hover); }
 
 .page {
   display: none;

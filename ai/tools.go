@@ -481,6 +481,16 @@ func (te *ToolExecutor) SetIntegrations(tools []integration.IntegrationTool) {
 	te.integrationTools = tools
 }
 
+// GetWorkDir returns the current workspace directory.
+func (te *ToolExecutor) GetWorkDir() string {
+	return te.workDir
+}
+
+// SetWorkDir changes the workspace directory.
+func (te *ToolExecutor) SetWorkDir(dir string) {
+	te.workDir = dir
+}
+
 func (te *ToolExecutor) LoadSkills() {
 	skills, _ := skill.LoadAll(te.homeDir)
 	te.skills = skills
