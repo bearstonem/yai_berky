@@ -27,6 +27,7 @@ function switchPage(page) {
   if (page === 'settings') { loadConfig(); loadProviders(); renderThemePicker(); loadSavedFontSize(); }
   if (page === 'agents') loadAgentsList();
   if (page === 'agent') loadAgentProfiles();
+  if (page === 'evolution') { loadEvolutionReviews(); loadSelfImproveGoals(); }
 }
 
 // --- New chat / new task ---
@@ -2177,6 +2178,42 @@ async function checkSelfImproveStatus() {
       connectSelfImproveStream();
     }
   } catch(e) {}
+}
+
+// --- Evolution Reviews ---
+
+async function loadEvolutionReviews() {
+  try {
+    const res = await fetch(API + '/api/self-improve/reviews');
+    const reviews = await res.json();
+    const container = document.getElementById('evolve-reviews');
+    if (!container) return;
+    if (!reviews || reviews.length === 0) {
+      container.innerHTML = '';
+      return;
+    }
+    container.innerHTML = reviews.map(r => {
+      // Extract just the question from the markdown content
+      const questionMatch = r.content.match(/## Question\s*\n+([\s\S]*?)(?=\n## |$)/);
+      const question = questionMatch ? questionMatch[1].trim() : r.content;
+      const timeStr = r.mod_time ? new Date(r.mod_time).toLocaleString() : '';
+      return '<div class="evolve-review-card">' +
+        '<div class="evolve-review-header">' +
+          '<span class="evolve-review-title">Needs Review</span>' +
+          '<span class="evolve-review-time">' + escapeHtml(timeStr) + '</span>' +
+        '</div>' +
+        '<div class="evolve-review-body">' + escapeHtml(question) + '</div>' +
+        '<div class="evolve-review-actions">' +
+          '<button class="evolve-review-dismiss" onclick="dismissReview(\'' + escapeHtml(r.filename) + '\')">Dismiss</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  } catch(e) {}
+}
+
+async function dismissReview(filename) {
+  await fetch(API + '/api/self-improve/reviews?file=' + encodeURIComponent(filename), { method: 'DELETE' });
+  loadEvolutionReviews();
 }
 
 // --- Themes ---

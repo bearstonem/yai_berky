@@ -86,6 +86,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/self-improve/stop", s.corsWrap(s.handleSelfImproveStop))
 	mux.HandleFunc("/api/self-improve/status", s.corsWrap(s.handleSelfImproveStatus))
 	mux.HandleFunc("/api/self-improve/stream", s.corsWrap(s.handleSelfImproveStream))
+	mux.HandleFunc("/api/self-improve/reviews", s.corsWrap(s.handleEvolutionReviews))
 
 	// Static files
 	staticFS, err := fs.Sub(staticFiles, "static")
@@ -950,6 +951,11 @@ var selfImprovePrompt = "You are Helm's self-improvement agent. You run periodic
 	"7. **REPORT**: Summarize what you accomplished this cycle.\n\n" +
 	"Be methodical. Do ONE thing well rather than many things poorly. Each cycle should make measurable progress.\n" +
 	"NEVER start long-running processes (dev servers, watchers). Only use short-lived commands.\n\n" +
+	"## AUTONOMY — NEVER BLOCK ON USER INPUT\n" +
+	"You run autonomously. NEVER use `escalate_to_user` to ask questions and wait for answers.\n" +
+	"If you need information (API keys, preferences, credentials), save your question to a file\n" +
+	"using `write_file` in ~/.config/helm/evolution-reviews/ and move on to something else.\n" +
+	"Your cycle must NEVER stop or block — find an alternative approach or defer the task to a future cycle.\n\n" +
 	"## CODE CHANGES & RESTART\n" +
 	"Your application source is automatically backed up before each cycle.\n" +
 	"If you modify Go source code (.go files), you MUST call `restart_helm` afterward to rebuild and relaunch.\n" +
@@ -1175,6 +1181,28 @@ func (s *Server) runSelfImproveCycle(ctx context.Context) {
 	}
 	engine.StartNewSession()
 
+	// Override escalation: write questions to a review file instead of blocking
+	engine.GetToolExecutor().SetOnEscalateToUser(func(question, context string) (string, error) {
+		reviewDir := filepath.Join(s.homeDir, ".config", "helm", "evolution-reviews")
+		os.MkdirAll(reviewDir, 0755)
+		ts := time.Now().Format("20060102-150405")
+		reviewFile := filepath.Join(reviewDir, fmt.Sprintf("cycle%d-%s.md", cycle, ts))
+		content := fmt.Sprintf("# Evolution Review — Cycle %d\n\n**Date:** %s\n\n## Question\n\n%s\n",
+			cycle, time.Now().Format("2006-01-02 15:04:05"), question)
+		if context != "" {
+			content += fmt.Sprintf("\n## Context\n\n%s\n", context)
+		}
+		content += "\n## Status\n\nPending user review.\n"
+		os.WriteFile(reviewFile, []byte(content), 0644)
+
+		select {
+		case ch <- ai.AgentEvent{Type: ai.AgentEventThinking, Content: fmt.Sprintf("Saved question for user review: %s", reviewFile)}:
+		default:
+		}
+
+		return "This question has been saved for user review at " + reviewFile + ". Continue your cycle without waiting — skip this task or find an alternative approach that doesn't require user input.", nil
+	})
+
 	s.mu.Lock()
 	s.selfImproveEngine = engine
 	s.mu.Unlock()
@@ -1261,6 +1289,59 @@ func (s *Server) handleAgentRespond(w http.ResponseWriter, r *http.Request) {
 
 	engine.RespondToEscalation(req.Response)
 	s.jsonResponse(w, map[string]string{"status": "sent"})
+}
+
+func (s *Server) handleEvolutionReviews(w http.ResponseWriter, r *http.Request) {
+	reviewDir := filepath.Join(s.homeDir, ".config", "helm", "evolution-reviews")
+
+	if r.Method == "DELETE" {
+		// Delete a specific review file
+		filename := r.URL.Query().Get("file")
+		if filename == "" {
+			s.jsonError(w, "file parameter required", 400)
+			return
+		}
+		// Prevent path traversal
+		if strings.Contains(filename, "/") || strings.Contains(filename, "\\") || strings.Contains(filename, "..") {
+			s.jsonError(w, "invalid filename", 400)
+			return
+		}
+		os.Remove(filepath.Join(reviewDir, filename))
+		s.jsonResponse(w, map[string]string{"status": "deleted"})
+		return
+	}
+
+	entries, err := os.ReadDir(reviewDir)
+	if err != nil {
+		s.jsonResponse(w, []interface{}{})
+		return
+	}
+	type review struct {
+		Filename string `json:"filename"`
+		Content  string `json:"content"`
+		ModTime  string `json:"mod_time"`
+	}
+	var reviews []review
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(reviewDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		info, _ := e.Info()
+		modTime := ""
+		if info != nil {
+			modTime = info.ModTime().Format(time.RFC3339)
+		}
+		reviews = append(reviews, review{
+			Filename: e.Name(),
+			Content:  string(data),
+			ModTime:  modTime,
+		})
+	}
+	s.jsonResponse(w, reviews)
 }
 
 func sseEvent(w http.ResponseWriter, flusher http.Flusher, event, data string) {
