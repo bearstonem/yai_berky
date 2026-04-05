@@ -616,7 +616,7 @@ function filterSkills() {
     filtered.length === allSkills.length ? '' : filtered.length + ' of ' + allSkills.length;
 
   if (allSkills.length === 0) {
-    container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x1F9E0;</div>#x1F527;</div>' +
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x1F527;</div>' +
       '<p>No skills yet. Create one or ask the agent to build a skill.</p></div>';
     return;
   }
@@ -764,7 +764,7 @@ function filterSessions() {
     filtered.length === allSessions.length ? '' : filtered.length + ' of ' + allSessions.length;
 
   if (allSessions.length === 0) {
-    container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x1F4C1;</div>#x1F4DC;</div>' +
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x1F4DC;</div>' +
       '<p>No sessions yet. Start a conversation to create one.</p></div>';
     return;
   }
@@ -913,7 +913,7 @@ async function loadAgentsList() {
   const container = document.getElementById('agents-list');
 
   if (agents.length === 0) {
-    container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x1F47E;#x1F6A2;</div>' +
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x1F6A2;</div>' +
       '<p>No custom agents yet. Create one to get started.</p></div>';
     return;
   }
@@ -925,7 +925,7 @@ async function loadAgentsList() {
     return `
     <div class="card">
       <div class="card-title">
-        <span>&#x1F47E;#x1F6A2;</span>
+        <span>&#x1F6A2;</span>
         <span>${escapeHtml(a.name)}</span>
         ${a.model ? '<span class="badge badge-lang">' + escapeHtml(a.model) + '</span>' : ''}
       </div>
