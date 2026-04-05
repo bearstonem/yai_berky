@@ -22,7 +22,7 @@ function switchPage(page) {
   // Load data for the page
   if (page === 'skills') loadSkills();
   if (page === 'sessions') loadSessions();
-  if (page === 'settings') { loadConfig(); loadProviders(); }
+  if (page === 'settings') { loadConfig(); loadProviders(); renderThemePicker(); }
   if (page === 'agents') loadAgentsList();
   if (page === 'agent') loadAgentProfiles();
 }
@@ -1921,7 +1921,74 @@ async function editBuilderResult() {
   }
 }
 
+// --- Themes ---
+
+const THEME_ICONS = {
+  '':            { logo: '✦', chat: '📡', agent: '🖖', agents: '🛸', skills: '⚡', sessions: '📋', settings: '⚙️' },
+  'matrix':      { logo: '⌬', chat: '▶',  agent: '◉',  agents: '◈',  skills: '⚙',  sessions: '▤',  settings: '⌘'  },
+  'netrunner':   { logo: '◇', chat: '⟐',  agent: '⬡',  agents: '⬢',  skills: '⚡', sessions: '▥',  settings: '⚙'  },
+  'snowcrash':   { logo: '☣', chat: '⌁',  agent: '⍟',  agents: '⎊',  skills: '⚒',  sessions: '⏣',  settings: '⚙'  },
+  'neuromancer': { logo: '◈', chat: '⌖',  agent: '⍾',  agents: '⎈',  skills: '⚛',  sessions: '☰',  settings: '⚙'  },
+  'bladerunner': { logo: '▲', chat: '◌',  agent: '◎',  agents: '⊛',  skills: '⚡', sessions: '≡',  settings: '⚙'  },
+  'lcars':       { logo: '◆', chat: '▸',  agent: '●',  agents: '◐',  skills: '◇',  sessions: '▪',  settings: '■'  },
+};
+
+const THEMES = [
+  { id: '',            name: 'Default',      colors: ['#0d1117', '#7c3aed', '#58a6ff', '#3fb950'] },
+  { id: 'matrix',      name: 'Matrix',       colors: ['#0a0a0a', '#00ff41', '#00ccff', '#22aa22'] },
+  { id: 'netrunner',   name: 'Netrunner',    colors: ['#0a0a12', '#ff00ff', '#00ccff', '#00ffcc'] },
+  { id: 'snowcrash',   name: 'Snow Crash',   colors: ['#000000', '#ff6600', '#ffcc00', '#3399ff'] },
+  { id: 'neuromancer', name: 'Neuromancer',  colors: ['#050a18', '#ffaa00', '#4488ff', '#00ddaa'] },
+  { id: 'bladerunner', name: 'Blade Runner', colors: ['#0a0808', '#ff8844', '#44aacc', '#44ddaa'] },
+  { id: 'lcars',       name: 'LCARS',        colors: ['#000000', '#ff9900', '#cc99ff', '#9999ff'] },
+];
+
+function renderThemePicker() {
+  const picker = document.getElementById('theme-picker');
+  if (!picker) return;
+  const current = document.documentElement.getAttribute('data-theme') || '';
+
+  picker.innerHTML = THEMES.map(t => {
+    const active = t.id === current ? ' active' : '';
+    const swatches = t.colors.map(c =>
+      '<span style="background:' + c + '"></span>').join('');
+    return '<div class="theme-card' + active + '" onclick="setTheme(\'' + t.id + '\')">' +
+      '<div class="theme-card-preview">' + swatches + '</div>' +
+      '<div class="theme-card-name">' + escapeHtml(t.name) + '</div></div>';
+  }).join('');
+}
+
+function setTheme(themeId) {
+  if (themeId) {
+    document.documentElement.setAttribute('data-theme', themeId);
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+  localStorage.setItem('helm-theme', themeId);
+  applyThemeIcons(themeId);
+  renderThemePicker();
+}
+
+function loadSavedTheme() {
+  const saved = localStorage.getItem('helm-theme') || '';
+  if (saved) {
+    document.documentElement.setAttribute('data-theme', saved);
+  }
+  applyThemeIcons(saved);
+}
+
+function applyThemeIcons(themeId) {
+  const icons = THEME_ICONS[themeId] || THEME_ICONS[''];
+  document.querySelectorAll('[data-icon]').forEach(el => {
+    const key = el.getAttribute('data-icon');
+    if (icons[key]) {
+      el.textContent = icons[key];
+    }
+  });
+}
+
 // --- Init ---
 
+loadSavedTheme();
 loadMemoryStats();
 loadConfig().catch(() => {});

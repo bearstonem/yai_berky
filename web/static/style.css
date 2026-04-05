@@ -18,6 +18,186 @@
   --radius-lg: 12px;
 }
 
+/* === THEMES === */
+
+/* Default: GitHub Dark (already in :root) */
+
+/* Matrix — green terminal rain */
+[data-theme="matrix"] {
+  --bg: #0a0a0a;
+  --bg-surface: #0d120d;
+  --bg-elevated: #111a11;
+  --bg-hover: #162016;
+  --border: #1a3a1a;
+  --text: #33ff33;
+  --text-dim: #22aa22;
+  --text-dimmer: #117711;
+  --accent: #00ff41;
+  --accent-hover: #33ff66;
+  --accent-dim: rgba(0, 255, 65, 0.12);
+  --success: #00ff41;
+  --warning: #ccff00;
+  --error: #ff3333;
+  --blue: #00ccff;
+}
+
+[data-theme="matrix"] body { font-family: 'Courier New', Courier, monospace; }
+[data-theme="matrix"] .logo-text { background: linear-gradient(135deg, #00ff41, #00ccff); -webkit-background-clip: text; }
+[data-theme="matrix"] .msg-user { background: #003300; border: 1px solid #00ff41; color: #33ff33; }
+
+/* Netrunner — cyan/magenta cyberpunk */
+[data-theme="netrunner"] {
+  --bg: #0a0a12;
+  --bg-surface: #0e0e1a;
+  --bg-elevated: #141422;
+  --bg-hover: #1a1a2e;
+  --border: #2a2a44;
+  --text: #e0e0ff;
+  --text-dim: #8888bb;
+  --text-dimmer: #555588;
+  --accent: #ff00ff;
+  --accent-hover: #ff44ff;
+  --accent-dim: rgba(255, 0, 255, 0.12);
+  --success: #00ffcc;
+  --warning: #ffaa00;
+  --error: #ff2266;
+  --blue: #00ccff;
+}
+
+[data-theme="netrunner"] .logo-text { background: linear-gradient(135deg, #ff00ff, #00ccff); -webkit-background-clip: text; }
+[data-theme="netrunner"] .msg-user { background: #330033; border: 1px solid #ff00ff; color: #e0e0ff; }
+[data-theme="netrunner"] .nav-btn.active { background: rgba(255, 0, 255, 0.1); color: #ff44ff; }
+
+/* Snow Crash — black/orange/white high-contrast */
+[data-theme="snowcrash"] {
+  --bg: #000000;
+  --bg-surface: #0a0a0a;
+  --bg-elevated: #111111;
+  --bg-hover: #1a1a1a;
+  --border: #333333;
+  --text: #ffffff;
+  --text-dim: #aaaaaa;
+  --text-dimmer: #666666;
+  --accent: #ff6600;
+  --accent-hover: #ff8833;
+  --accent-dim: rgba(255, 102, 0, 0.12);
+  --success: #00ff88;
+  --warning: #ffcc00;
+  --error: #ff0033;
+  --blue: #3399ff;
+}
+
+[data-theme="snowcrash"] .logo-text { background: linear-gradient(135deg, #ff6600, #ffcc00); -webkit-background-clip: text; }
+[data-theme="snowcrash"] .msg-user { background: #331a00; border: 1px solid #ff6600; color: #ffffff; }
+
+/* Neuromancer — blue/gold on deep navy */
+[data-theme="neuromancer"] {
+  --bg: #050a18;
+  --bg-surface: #0a1228;
+  --bg-elevated: #0f1a35;
+  --bg-hover: #152040;
+  --border: #1a3060;
+  --text: #c8d8ff;
+  --text-dim: #7090cc;
+  --text-dimmer: #405880;
+  --accent: #ffaa00;
+  --accent-hover: #ffcc33;
+  --accent-dim: rgba(255, 170, 0, 0.12);
+  --success: #00ddaa;
+  --warning: #ffaa00;
+  --error: #ff4466;
+  --blue: #4488ff;
+}
+
+[data-theme="neuromancer"] .logo-text { background: linear-gradient(135deg, #ffaa00, #4488ff); -webkit-background-clip: text; }
+[data-theme="neuromancer"] .msg-user { background: #1a1200; border: 1px solid #ffaa00; color: #c8d8ff; }
+
+/* Blade Runner — warm amber/teal noir */
+[data-theme="bladerunner"] {
+  --bg: #0a0808;
+  --bg-surface: #120e0c;
+  --bg-elevated: #1a1410;
+  --bg-hover: #221a14;
+  --border: #3a2a1a;
+  --text: #e8d8c8;
+  --text-dim: #aa9080;
+  --text-dimmer: #706050;
+  --accent: #ff8844;
+  --accent-hover: #ffaa66;
+  --accent-dim: rgba(255, 136, 68, 0.12);
+  --success: #44ddaa;
+  --warning: #ffcc44;
+  --error: #ff4444;
+  --blue: #44aacc;
+}
+
+[data-theme="bladerunner"] .logo-text { background: linear-gradient(135deg, #ff8844, #44aacc); -webkit-background-clip: text; }
+[data-theme="bladerunner"] .msg-user { background: #1a0e05; border: 1px solid #ff8844; color: #e8d8c8; }
+
+/* LCARS — Star Trek orange/purple/blue */
+[data-theme="lcars"] {
+  --bg: #000000;
+  --bg-surface: #0a0a14;
+  --bg-elevated: #12121e;
+  --bg-hover: #1a1a28;
+  --border: #cc99ff;
+  --text: #ffffff;
+  --text-dim: #cc99ff;
+  --text-dimmer: #8866aa;
+  --accent: #ff9900;
+  --accent-hover: #ffbb33;
+  --accent-dim: rgba(255, 153, 0, 0.15);
+  --success: #99ccff;
+  --warning: #ff9900;
+  --error: #ff3333;
+  --blue: #9999ff;
+}
+
+[data-theme="lcars"] .logo-text { background: linear-gradient(135deg, #ff9900, #cc99ff); -webkit-background-clip: text; }
+[data-theme="lcars"] .msg-user { background: #1a0e00; border: 1px solid #ff9900; color: #ffffff; }
+[data-theme="lcars"] #sidebar { border-right: 3px solid #cc99ff; }
+[data-theme="lcars"] .nav-btn.active { background: rgba(255, 153, 0, 0.15); color: #ff9900; }
+
+/* Theme picker */
+.theme-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.theme-card {
+  width: 120px;
+  padding: 12px;
+  border-radius: var(--radius);
+  border: 2px solid var(--border);
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
+}
+
+.theme-card:hover { transform: translateY(-2px); }
+.theme-card.active { border-color: var(--accent); box-shadow: 0 0 12px var(--accent-dim); }
+
+.theme-card-preview {
+  height: 40px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  display: flex;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.theme-card-preview span {
+  flex: 1;
+  display: block;
+}
+
+.theme-card-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
