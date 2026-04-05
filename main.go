@@ -57,6 +57,9 @@ func startGUI(input *ui.UiInput) error {
 		return fmt.Errorf("finding home dir: %w", err)
 	}
 
-	srv := web.NewServer(cfg, engine, homeDir, input.GetGUIPort())
+	// Detect source directory (where go.mod lives)
+	sourceDir, _ := os.Getwd()
+
+	srv := web.NewServer(cfg, engine, homeDir, sourceDir, input.GetGUIPort())
 	return srv.Start()
 }

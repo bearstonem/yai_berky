@@ -8,7 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"os"
+	"os/exec"
+	"path/filepath"
+
 	"github.com/bearstonem/helm/agent"
+	"github.com/bearstonem/helm/backup"
 	"github.com/bearstonem/helm/config"
 	"github.com/bearstonem/helm/hook"
 	"github.com/bearstonem/helm/integration"
@@ -117,6 +122,7 @@ func NewEngine(mode EngineMode, cfg *config.Config) (*Engine, error) {
 	te.SetOnCreateAgent(e.executeCreateAgent)
 	te.SetOnDelegateTask(e.executeDelegation)
 	te.SetOnEscalateToUser(e.executeEscalation)
+	te.SetOnRestartHelm(e.executeRestart)
 
 	return e, nil
 }
@@ -1127,6 +1133,24 @@ func (e *Engine) executeEscalation(question, context string) (string, error) {
 // RespondToEscalation sends the user's response to a blocked escalation.
 func (e *Engine) RespondToEscalation(response string) {
 	e.escalationChan <- response
+}
+
+// executeRestart triggers the restart script to rebuild and relaunch Helm.
+func (e *Engine) executeRestart(reason string) (string, error) {
+	scriptPath := filepath.Join(backup.BackupsDir(e.homeDir), "restart.sh")
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("restart script not found at %s — run from GUI mode to generate it", scriptPath)
+	}
+
+	// Launch restart script in background (it will kill this process)
+	cmd := exec.Command("bash", scriptPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("failed to launch restart script: %w", err)
+	}
+
+	return fmt.Sprintf("Restart initiated (reason: %s). The application will stop, rebuild, and relaunch. If the build fails, the latest backup will be restored automatically.", reason), nil
 }
 
 // prepareAvailableAgents returns a prompt section listing available agents for collaboration.
