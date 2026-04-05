@@ -1,0 +1,15 @@
+services:
+  helm:
+    build: .
+    container_name: helm
+    stdin_open: true
+    tty: true
+    volumes:
+      - helm-data:/root/.config/helm
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+
+volumes:
+  helm-data:
