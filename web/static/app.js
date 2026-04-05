@@ -588,8 +588,12 @@ function addMessage(containerId, text, type) {
 // --- Skills ---
 
 async function loadSkills() {
-  const res = await fetch(API + '/api/skills');
-  allSkills = await res.json();
+  const [skillsRes, cfgRes] = await Promise.all([
+    fetch(API + '/api/skills'),
+    fetch(API + '/api/config'),
+  ]);
+  allSkills = await skillsRes.json();
+  if (cfgRes.ok) currentConfig = await cfgRes.json();
   filterSkills();
 }
 
@@ -615,17 +619,27 @@ function filterSkills() {
   document.getElementById('skills-count').textContent =
     filtered.length === allSkills.length ? '' : filtered.length + ' of ' + allSkills.length;
 
-  if (allSkills.length === 0) {
-    container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x1F527;</div>' +
-      '<p>No skills yet. Create one or ask the agent to build a skill.</p></div>';
+  // Built-in tools section
+  let builtinHTML = '<div style="margin-bottom:16px"><h3 style="margin:0 0 8px;opacity:0.7;font-size:0.85em;text-transform:uppercase;letter-spacing:1px">Built-in Tools</h3><div class="card-grid">';
+  builtinHTML += renderBuiltinToolCards();
+  builtinHTML += '</div></div>';
+
+  if (allSkills.length === 0 && filtered.length === 0) {
+    container.innerHTML = builtinHTML +
+      '<div style="margin-top:8px"><h3 style="margin:0 0 8px;opacity:0.7;font-size:0.85em;text-transform:uppercase;letter-spacing:1px">User Skills</h3>' +
+      '<div class="empty-state"><div class="empty-icon">&#x1F527;</div>' +
+      '<p>No skills yet. Create one or ask the agent to build a skill.</p></div></div>';
     return;
   }
   if (filtered.length === 0) {
-    container.innerHTML = '<div class="empty-state"><p>No skills match your filter.</p></div>';
+    container.innerHTML = builtinHTML +
+      '<div class="empty-state"><p>No skills match your filter.</p></div>';
     return;
   }
 
-  container.innerHTML = filtered.map(s => `
+  container.innerHTML = builtinHTML +
+    '<div style="margin-top:8px"><h3 style="margin:0 0 8px;opacity:0.7;font-size:0.85em;text-transform:uppercase;letter-spacing:1px">User Skills</h3><div class="card-grid">' +
+    filtered.map(s => `
     <div class="card">
       <div class="card-title">
         <span>${escapeHtml(s.name)}</span>
@@ -638,7 +652,48 @@ function filterSkills() {
         <button class="card-btn danger" onclick="deleteSkill('${escapeHtml(s.name)}')">Delete</button>
       </div>
     </div>
-  `).join('');
+  `).join('') + '</div></div>';
+}
+
+function renderBuiltinToolCards() {
+  const builtins = [
+    {
+      name: 'web_search',
+      desc: 'Search the web via Brave Search API',
+      lang: 'node',
+      keyName: 'BRAVE_API_KEY',
+      configLink: 'settings',
+    },
+    { name: 'run_command', desc: 'Execute shell commands (60s timeout)', lang: 'built-in', keyName: null },
+    { name: 'read_file', desc: 'Read file contents', lang: 'built-in', keyName: null },
+    { name: 'write_file', desc: 'Create or overwrite a file', lang: 'built-in', keyName: null },
+    { name: 'edit_file', desc: 'Edit parts of an existing file', lang: 'built-in', keyName: null },
+    { name: 'list_directory', desc: 'List directory contents', lang: 'built-in', keyName: null },
+    { name: 'search_files', desc: 'Search file contents with regex', lang: 'built-in', keyName: null },
+    { name: 'create_skill', desc: 'Create a new reusable skill', lang: 'built-in', keyName: null },
+    { name: 'create_agent', desc: 'Create a new sub-agent', lang: 'built-in', keyName: null },
+    { name: 'delegate_task', desc: 'Delegate a task to a sub-agent', lang: 'built-in', keyName: null },
+  ];
+
+  return builtins.map(t => {
+    let statusBadge = '<span class="badge badge-lang">' + escapeHtml(t.lang) + '</span>';
+    if (t.keyName) {
+      // Check if the key is configured (we loaded config earlier)
+      const cfgKey = t.keyName.toLowerCase().replace(/_/g, '_');  // e.g. brave_api_key
+      const keyVal = currentConfig && currentConfig[cfgKey] || '';
+      const hasKey = keyVal && !keyVal.match(/^\*+$/) && keyVal.length > 0;
+      if (hasKey) {
+        statusBadge += ' <span class="badge" style="background:var(--accent);color:#000">configured</span>';
+      } else {
+        statusBadge += ' <span class="badge" style="background:#c33;color:#fff;cursor:pointer" onclick="switchPage(\'settings\')">key needed</span>';
+      }
+    }
+    return '<div class="card" style="opacity:0.85">' +
+      '<div class="card-title"><span>' + escapeHtml(t.name) + '</span>' + statusBadge + '</div>' +
+      '<div class="card-desc">' + escapeHtml(t.desc) + '</div>' +
+      (t.keyName ? '<div class="card-meta">Requires <code>' + escapeHtml(t.keyName) + '</code> — <a href="#" onclick="switchPage(\'settings\');return false" style="color:var(--accent)">configure in settings</a></div>' : '') +
+      '</div>';
+  }).join('');
 }
 
 function showCreateSkill() {
@@ -1164,6 +1219,14 @@ async function loadConfig() {
         <option value="true" ${cfg.allow_sudo ? 'selected' : ''}>Yes</option>
       </select>
     </div>
+    <div class="form-group full-width" style="grid-column: 1 / -1; border-top: 1px solid var(--border); padding-top: 16px; margin-top: 8px;">
+      <label style="font-size: 1.1em; margin-bottom: 8px;">Built-in Tool Keys</label>
+    </div>
+    <div class="form-group">
+      <label>Brave Search API Key</label>
+      <input type="password" id="cfg-brave-key" value="${escapeHtml(cfg.brave_api_key || '')}" placeholder="BRAVE_API_KEY">
+      <p class="form-hint">Required for web_search tool. <a href="https://brave.com/search/api/" target="_blank" style="color:var(--accent)">Get a free key</a></p>
+    </div>
     <div class="form-group full-width">
       <label>User Preferences</label>
       <textarea id="cfg-preferences" rows="3" placeholder="Free-text preferences appended to the system prompt...">${escapeHtml(cfg.preferences || '')}</textarea>
@@ -1199,6 +1262,7 @@ async function saveSettings() {
     auto_execute: document.getElementById('cfg-auto-exec').value === 'true',
     allow_sudo: document.getElementById('cfg-sudo').value === 'true',
     preferences: document.getElementById('cfg-preferences').value,
+    brave_api_key: document.getElementById('cfg-brave-key').value,
   };
 
   const statusEl = document.getElementById('settings-status');

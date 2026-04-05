@@ -26,6 +26,7 @@ import (
 	"github.com/bearstonem/helm/memory"
 	"github.com/bearstonem/helm/session"
 	"github.com/bearstonem/helm/skill"
+	"github.com/spf13/viper"
 )
 
 //go:embed static/*
@@ -62,6 +63,11 @@ func NewServer(cfg *config.Config, engine *ai.Engine, homeDir string, sourceDir 
 
 // Start launches the HTTP server and opens the browser.
 func (s *Server) Start() error {
+	// Sync tool API keys from config to environment on startup
+	if braveKey := viper.GetString("BRAVE_API_KEY"); braveKey != "" && os.Getenv("BRAVE_API_KEY") == "" {
+		os.Setenv("BRAVE_API_KEY", braveKey)
+	}
+
 	mux := http.NewServeMux()
 
 	// API routes
@@ -307,6 +313,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	case "GET":
 		aiCfg := s.config.GetAiConfig()
 		userCfg := s.config.GetUserConfig()
+		braveKey := os.Getenv("BRAVE_API_KEY")
+		if braveKey == "" {
+			braveKey = viper.GetString("BRAVE_API_KEY")
+		}
 		s.jsonResponse(w, map[string]interface{}{
 			"provider":            aiCfg.GetProvider(),
 			"api_key":             maskKey(aiCfg.GetKey()),
@@ -320,6 +330,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"allow_sudo":          userCfg.GetAllowSudo(),
 			"auto_execute":        userCfg.GetAgentAutoExecute(),
 			"permission_mode":     userCfg.GetPermissionMode().String(),
+			"brave_api_key":       maskKey(braveKey),
 		})
 
 	case "PUT":
@@ -343,13 +354,14 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"allow_sudo":          "USER_ALLOW_SUDO",
 			"auto_execute":        "USER_AGENT_AUTO_EXECUTE",
 			"permission_mode":     "USER_PERMISSION_MODE",
+			"brave_api_key":       "BRAVE_API_KEY",
 		}
 
 		settings := make(map[string]interface{})
 		for frontendKey, viperKey := range keyMap {
 			if val, ok := req[frontendKey]; ok {
-				// Don't overwrite key with masked value
-				if frontendKey == "api_key" {
+				// Don't overwrite keys with masked values
+				if frontendKey == "api_key" || frontendKey == "brave_api_key" {
 					str, isStr := val.(string)
 					if isStr && (str == "" || strings.Contains(str, "***")) {
 						continue
@@ -365,6 +377,13 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.config = newCfg
+
+		// Sync tool API keys to environment so child processes can access them
+		if braveVal, ok := settings["BRAVE_API_KEY"]; ok {
+			if s, ok := braveVal.(string); ok && s != "" {
+				os.Setenv("BRAVE_API_KEY", s)
+			}
+		}
 
 		s.jsonResponse(w, map[string]string{"status": "saved"})
 
