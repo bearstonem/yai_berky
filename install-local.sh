@@ -17,31 +17,185 @@ INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 BINARY_NAME="helm"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+KERNEL=$(uname -s)
+case "$KERNEL" in
+    Linux)  OS="linux" ;;
+    Darwin) OS="darwin" ;;
+    *)      fail "Unsupported OS: $KERNEL" ;;
+esac
+
+# Detect package manager (Linux)
+detect_pkg_manager() {
+    if command -v apt-get &>/dev/null; then
+        echo "apt"
+    elif command -v dnf &>/dev/null; then
+        echo "dnf"
+    elif command -v yum &>/dev/null; then
+        echo "yum"
+    elif command -v pacman &>/dev/null; then
+        echo "pacman"
+    elif command -v apk &>/dev/null; then
+        echo "apk"
+    elif command -v zypper &>/dev/null; then
+        echo "zypper"
+    else
+        echo ""
+    fi
+}
+
+pkg_install() {
+    local pkg_apt="${1:-}" pkg_dnf="${2:-$1}" pkg_pacman="${3:-$1}" pkg_apk="${4:-$1}" pkg_zypper="${5:-$1}"
+    local mgr
+    mgr=$(detect_pkg_manager)
+    case "$mgr" in
+        apt)     sudo apt-get update -qq && sudo apt-get install -y -qq "$pkg_apt" ;;
+        dnf)     sudo dnf install -y "$pkg_dnf" ;;
+        yum)     sudo yum install -y "$pkg_dnf" ;;
+        pacman)  sudo pacman -S --noconfirm "$pkg_pacman" ;;
+        apk)     sudo apk add --no-cache "$pkg_apk" ;;
+        zypper)  sudo zypper install -y "$pkg_zypper" ;;
+        *)       return 1 ;;
+    esac
+}
+
 # ── Check prerequisites ──────────────────────────────────────────────
 
 info "Checking prerequisites"
 
-command -v go >/dev/null 2>&1 || fail "Go is not installed. Install it from https://go.dev/dl/"
-ok "Go $(go version | awk '{print $3}' | sed 's/go//')"
-
-# Check for C compiler (CGO required for sqlite-vec)
-if command -v gcc >/dev/null 2>&1; then
-    ok "C compiler: gcc"
-elif command -v clang >/dev/null 2>&1; then
-    ok "C compiler: clang"
+# Git
+if ! command -v git &>/dev/null; then
+    warn "Git not found. Installing..."
+    if [ "$OS" = "darwin" ]; then
+        if command -v brew &>/dev/null; then
+            brew install git
+        else
+            warn "Installing Xcode Command Line Tools (includes git)..."
+            xcode-select --install 2>/dev/null || true
+            echo "    Waiting for Xcode CLT installation to complete..."
+            until command -v git &>/dev/null; do sleep 5; done
+        fi
+    else
+        pkg_install git git git git git || fail "Could not install git automatically. Install it manually and re-run."
+    fi
+fi
+if command -v git &>/dev/null; then
+    ok "Git $(git --version | sed 's/git version //')"
 else
-    fail "No C compiler found. Install gcc or clang (CGO required for sqlite-vec).\n   Debian/Ubuntu: sudo apt-get install build-essential libsqlite3-dev"
+    warn "Git was installed but is not yet on PATH. You may need to restart your terminal."
 fi
 
-# Check for sqlite3 headers
+# Go
+if ! command -v go &>/dev/null; then
+    warn "Go not found. Installing..."
+    if [ "$OS" = "darwin" ]; then
+        if command -v brew &>/dev/null; then
+            brew install go
+        else
+            fail "Go is not installed and Homebrew is not available.\n  Install Go from https://go.dev/dl/ or install Homebrew first."
+        fi
+    else
+        # Try package manager first
+        installed=false
+        pkg_install golang golang go go go && installed=true
+
+        # If package manager version is too old or unavailable, use official tarball
+        if [ "$installed" = false ] || ! command -v go &>/dev/null; then
+            warn "Installing Go from official tarball..."
+            ARCH=$(uname -m)
+            case "$ARCH" in
+                x86_64)       GOARCH="amd64" ;;
+                aarch64|arm64) GOARCH="arm64" ;;
+                armv7*|armv6*) GOARCH="armv6l" ;;
+                *)            fail "Unsupported architecture: $ARCH" ;;
+            esac
+            GO_VERSION=$(curl -fsSL "https://go.dev/VERSION?m=text" | head -1)
+            GO_TAR="${GO_VERSION}.linux-${GOARCH}.tar.gz"
+            curl -fsSL "https://go.dev/dl/$GO_TAR" -o "/tmp/$GO_TAR"
+            sudo rm -rf /usr/local/go
+            sudo tar -C /usr/local -xzf "/tmp/$GO_TAR"
+            rm -f "/tmp/$GO_TAR"
+            export PATH="/usr/local/go/bin:$PATH"
+        fi
+    fi
+fi
+if ! command -v go &>/dev/null; then
+    fail "Go was installed but is not on PATH. Restart your terminal and re-run."
+fi
+ok "Go $(go version | awk '{print $3}' | sed 's/go//')"
+
+# C compiler
+cc_found=false
+for cc in gcc clang cc; do
+    if command -v "$cc" &>/dev/null; then
+        ok "C compiler: $cc"
+        cc_found=true
+        break
+    fi
+done
+
+if [ "$cc_found" = false ]; then
+    warn "No C compiler found. Installing..."
+    if [ "$OS" = "darwin" ]; then
+        if ! xcode-select -p &>/dev/null; then
+            warn "Installing Xcode Command Line Tools..."
+            xcode-select --install 2>/dev/null || true
+            echo "    Waiting for Xcode CLT installation to complete..."
+            until command -v clang &>/dev/null; do sleep 5; done
+        fi
+    else
+        pkg_install build-essential gcc base-devel build-base gcc || fail "Could not install C compiler. Install gcc manually and re-run."
+    fi
+    for cc in gcc clang cc; do
+        if command -v "$cc" &>/dev/null; then
+            ok "C compiler: $cc"
+            cc_found=true
+            break
+        fi
+    done
+    if [ "$cc_found" = false ]; then
+        fail "C compiler installation failed. Install gcc or clang manually and re-run."
+    fi
+fi
+
+# SQLite3 development headers
+sqlite3_found=false
 if pkg-config --exists sqlite3 2>/dev/null; then
-    ok "SQLite3 development headers"
-elif [[ -f /usr/include/sqlite3.h ]]; then
+    sqlite3_found=true
+elif [ -f /usr/include/sqlite3.h ] || [ -f /usr/local/include/sqlite3.h ]; then
+    sqlite3_found=true
+elif [ "$OS" = "darwin" ]; then
+    # macOS includes sqlite3 with Xcode CLT / SDK
+    if [ -f "$(xcrun --show-sdk-path 2>/dev/null)/usr/include/sqlite3.h" ] 2>/dev/null; then
+        sqlite3_found=true
+    fi
+fi
+
+if [ "$sqlite3_found" = true ]; then
     ok "SQLite3 development headers"
 else
-    warn "SQLite3 dev headers may be missing. If build fails, run:"
-    echo "    sudo apt-get install libsqlite3-dev   # Debian/Ubuntu"
-    echo "    brew install sqlite3                   # macOS"
+    warn "SQLite3 dev headers not found. Installing..."
+    if [ "$OS" = "darwin" ]; then
+        if command -v brew &>/dev/null; then
+            brew install sqlite3
+        else
+            warn "Install Xcode CLT for sqlite3 headers: xcode-select --install"
+        fi
+    else
+        pkg_install libsqlite3-dev sqlite-devel sqlite sqlite-dev sqlite3-devel \
+            || warn "Could not install sqlite3 headers automatically."
+    fi
+
+    # Re-check
+    if pkg-config --exists sqlite3 2>/dev/null; then
+        ok "Installed SQLite3 development headers"
+    elif [ -f /usr/include/sqlite3.h ] || [ -f /usr/local/include/sqlite3.h ]; then
+        ok "Installed SQLite3 development headers"
+    else
+        warn "SQLite3 dev headers may still be missing. If the build fails, install manually:"
+        echo "    sudo apt-get install libsqlite3-dev   # Debian/Ubuntu"
+        echo "    sudo dnf install sqlite-devel          # Fedora/RHEL"
+        echo "    brew install sqlite3                   # macOS"
+    fi
 fi
 
 # ── Build ─────────────────────────────────────────────────────────────
@@ -49,6 +203,14 @@ fi
 info "Building Helm from source"
 
 cd "$SCRIPT_DIR"
+
+# On macOS with Homebrew sqlite3, help CGO find the headers
+if [ "$OS" = "darwin" ] && [ -d "$(brew --prefix sqlite3 2>/dev/null)/include" ] 2>/dev/null; then
+    SQLITE_PREFIX="$(brew --prefix sqlite3)"
+    export CGO_CFLAGS="-I${SQLITE_PREFIX}/include"
+    export CGO_LDFLAGS="-L${SQLITE_PREFIX}/lib"
+fi
+
 CGO_ENABLED=1 go build -ldflags="-s -w" -o "$BINARY_NAME" .
 ok "Built $(pwd)/$BINARY_NAME"
 
@@ -156,33 +318,33 @@ if [[ ! -f "$MIGRATION_MARKER" ]] && [[ -d "$HOME/.config/yai" || -f "$HOME/.con
     ok "Migration complete (won't run again)"
 fi
 
-# ── Verify ────────────────────────────────────────────────────────────
+# ── Verify ─────────────────────────────��──────────────────────────────
 
 echo ""
 if command -v helm >/dev/null 2>&1; then
     info "✦ Helm is ready!"
     echo ""
-    echo "  ${BOLD}helm --setup${RESET}          first-time setup wizard (start here!)"
-    echo "  ${BOLD}helm${RESET}                  interactive REPL"
-    echo "  ${BOLD}helm --gui${RESET}            web GUI (agents, skills, settings)"
-    echo "  ${BOLD}helm -a${RESET} <task>         agent mode (autonomous)"
-    echo "  ${BOLD}helm -c${RESET} <question>     chat with the AI"
-    echo "  ${BOLD}helm -e${RESET} <query>        generate a single command"
-    echo "  ${BOLD}helm --pipe -a${RESET} <task>   headless mode (no TUI, for scripts)"
+    echo -e "  ${BOLD}helm --setup${RESET}          first-time setup wizard (start here!)"
+    echo -e "  ${BOLD}helm${RESET}                  interactive REPL"
+    echo -e "  ${BOLD}helm --gui${RESET}            web GUI (agents, skills, settings)"
+    echo -e "  ${BOLD}helm -a${RESET} <task>         agent mode (autonomous)"
+    echo -e "  ${BOLD}helm -c${RESET} <question>     chat with the AI"
+    echo -e "  ${BOLD}helm -e${RESET} <query>        generate a single command"
+    echo -e "  ${BOLD}helm --pipe -a${RESET} <task>   headless mode (no TUI, for scripts)"
     echo ""
-    echo "  Press ${BOLD}tab${RESET} inside the REPL to switch modes (▶ exec / 📡 chat / 🖖 agent)"
+    echo -e "  Press ${BOLD}tab${RESET} inside the REPL to switch modes (▶ exec / 📡 chat / 🖖 agent)"
 else
     info "Almost ready!"
     echo ""
-    echo "  Run ${BOLD}source $RC_FILE${RESET} or restart your terminal, then:"
+    echo -e "  Run ${BOLD}source ${RC_FILE:-~/.profile}${RESET} or restart your terminal, then:"
     echo ""
-    echo "  ${BOLD}helm --setup${RESET}          first-time setup wizard (start here!)"
-    echo "  ${BOLD}helm${RESET}                  interactive REPL"
-    echo "  ${BOLD}helm --gui${RESET}            web GUI (agents, skills, settings)"
-    echo "  ${BOLD}helm -a${RESET} <task>         agent mode (autonomous)"
-    echo "  ${BOLD}helm -c${RESET} <question>     chat with the AI"
-    echo "  ${BOLD}helm -e${RESET} <query>        generate a single command"
-    echo "  ${BOLD}helm --pipe -a${RESET} <task>   headless mode (no TUI, for scripts)"
+    echo -e "  ${BOLD}helm --setup${RESET}          first-time setup wizard (start here!)"
+    echo -e "  ${BOLD}helm${RESET}                  interactive REPL"
+    echo -e "  ${BOLD}helm --gui${RESET}            web GUI (agents, skills, settings)"
+    echo -e "  ${BOLD}helm -a${RESET} <task>         agent mode (autonomous)"
+    echo -e "  ${BOLD}helm -c${RESET} <question>     chat with the AI"
+    echo -e "  ${BOLD}helm -e${RESET} <query>        generate a single command"
+    echo -e "  ${BOLD}helm --pipe -a${RESET} <task>   headless mode (no TUI, for scripts)"
     echo ""
-    echo "  Press ${BOLD}tab${RESET} inside the REPL to switch modes (▶ exec / 📡 chat / 🖖 agent)"
+    echo -e "  Press ${BOLD}tab${RESET} inside the REPL to switch modes (▶ exec / 📡 chat / 🖖 agent)"
 fi
