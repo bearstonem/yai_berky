@@ -6,9 +6,23 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
+
+// shellArgs returns the shell and arguments for executing a command string
+// on the current platform.
+func shellArgs(command string) (string, []string) {
+	if runtime.GOOS == "windows" {
+		// Try PowerShell first, fall back to cmd
+		if _, err := exec.LookPath("powershell"); err == nil {
+			return "powershell", []string{"-NoProfile", "-NonInteractive", "-Command", command}
+		}
+		return "cmd", []string{"/C", command}
+	}
+	return "bash", []string{"-c", command}
+}
 
 func RunCommand(cmd string, arg ...string) (string, error) {
 	out, err := exec.Command(cmd, arg...).Output()
@@ -20,14 +34,22 @@ func RunCommand(cmd string, arg ...string) (string, error) {
 }
 
 func PrepareInteractiveCommand(input string) *exec.Cmd {
+	shell, args := shellArgs(strings.TrimRight(input, ";"))
+	if runtime.GOOS == "windows" {
+		return exec.Command(shell, args...)
+	}
 	return exec.Command(
-		"bash",
+		shell,
 		"-c",
 		fmt.Sprintf("echo \"\n\";%s; echo \"\n\";", strings.TrimRight(input, ";")),
 	)
 }
 
 func PrepareSudoInteractiveCommand(input string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		// No sudo on Windows — run the command directly
+		return PrepareInteractiveCommand(input)
+	}
 	return exec.Command(
 		"bash",
 		"-c",
@@ -36,8 +58,12 @@ func PrepareSudoInteractiveCommand(input string) *exec.Cmd {
 }
 
 func PrepareEditSettingsCommand(input string) *exec.Cmd {
+	shell, args := shellArgs(strings.TrimRight(input, ";"))
+	if runtime.GOOS == "windows" {
+		return exec.Command(shell, args...)
+	}
 	return exec.Command(
-		"bash",
+		shell,
 		"-c",
 		fmt.Sprintf("%s; echo \"\n\";", strings.TrimRight(input, ";")),
 	)
@@ -62,7 +88,8 @@ func CaptureCommand(command string, workingDir string, timeout time.Duration) (*
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", command)
+	shell, args := shellArgs(command)
+	cmd := exec.CommandContext(ctx, shell, args...)
 	if workingDir != "" {
 		cmd.Dir = workingDir
 	}
@@ -138,6 +165,11 @@ func captureExec(ctx context.Context, cmd *exec.Cmd, timeout time.Duration) (*Ca
 }
 
 func CommandContainsSudo(cmd string) bool {
+	// No sudo on Windows
+	if runtime.GOOS == "windows" {
+		return false
+	}
+
 	trimmed := strings.TrimSpace(cmd)
 
 	if strings.HasPrefix(trimmed, "sudo ") || trimmed == "sudo" {
