@@ -125,28 +125,35 @@ else
     fi
 fi
 
-# ── Migrate data from yai if needed ───────────────────────────────────
+# ── Migrate data from yai if needed (one-time) ───────────────────────
 
-if [[ -f "$HOME/.config/yai.json" ]] && [[ ! -f "$HOME/.config/helm.json" ]]; then
-    cp "$HOME/.config/yai.json" "$HOME/.config/helm.json"
-    ok "Migrated config from ~/.config/yai.json → ~/.config/helm.json"
-fi
+MIGRATION_MARKER="$HOME/.config/helm/.migrated_from_yai"
+if [[ ! -f "$MIGRATION_MARKER" ]] && [[ -d "$HOME/.config/yai" || -f "$HOME/.config/yai.json" ]]; then
+    info "Migrating data from yai → helm (one-time)"
 
-# Migrate each subdirectory individually (sessions, skills, agents)
-for subdir in sessions skills agents; do
-    src="$HOME/.config/yai/$subdir"
-    dst="$HOME/.config/helm/$subdir"
-    if [[ -d "$src" ]] && [[ -n "$(ls -A "$src" 2>/dev/null)" ]]; then
-        mkdir -p "$dst"
-        cp -rn "$src"/* "$dst"/ 2>/dev/null && ok "Migrated $subdir from yai → helm"
+    if [[ -f "$HOME/.config/yai.json" ]] && [[ ! -f "$HOME/.config/helm.json" ]]; then
+        cp "$HOME/.config/yai.json" "$HOME/.config/helm.json"
+        ok "Migrated config"
     fi
-done
 
-# Migrate memory database
-if [[ -f "$HOME/.config/yai/memory.db" ]] && [[ ! -f "$HOME/.config/helm/memory.db" ]]; then
+    for subdir in sessions skills agents; do
+        src="$HOME/.config/yai/$subdir"
+        dst="$HOME/.config/helm/$subdir"
+        if [[ -d "$src" ]] && [[ -n "$(ls -A "$src" 2>/dev/null)" ]]; then
+            mkdir -p "$dst"
+            cp -rn "$src"/* "$dst"/ 2>/dev/null && ok "Migrated $subdir"
+        fi
+    done
+
+    if [[ -f "$HOME/.config/yai/memory.db" ]] && [[ ! -f "$HOME/.config/helm/memory.db" ]]; then
+        mkdir -p "$HOME/.config/helm"
+        cp "$HOME/.config/yai/memory.db" "$HOME/.config/helm/memory.db"
+        ok "Migrated memory.db"
+    fi
+
     mkdir -p "$HOME/.config/helm"
-    cp "$HOME/.config/yai/memory.db" "$HOME/.config/helm/memory.db"
-    ok "Migrated memory.db from yai → helm"
+    touch "$MIGRATION_MARKER"
+    ok "Migration complete (won't run again)"
 fi
 
 # ── Verify ────────────────────────────────────────────────────────────

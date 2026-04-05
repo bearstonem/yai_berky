@@ -46,6 +46,7 @@
       <div class="page-header">
         <h1>Chat</h1>
         <span class="page-desc">Ask questions, get answers</span>
+        <button class="new-chat-btn" onclick="newChat()" title="Start a new conversation">+ New Chat</button>
       </div>
       <div id="chat-messages" class="message-area"></div>
       <div class="input-bar">
@@ -60,6 +61,7 @@
       <div class="page-header">
         <h1>Primary Agent</h1>
         <span class="page-desc">Give tasks, watch the AI work autonomously</span>
+        <button class="new-chat-btn" onclick="newAgentTask()" title="Start a new task">+ New Task</button>
         <button class="deleg-toggle-btn" id="deleg-toggle" onclick="toggleDelegationPanel()" title="Show delegation flow">&#x269B; Flow</button>
         <select id="agent-profile-select" class="profile-select" onchange="onAgentProfileChange()">
           <option value="">Primary Agent</option>

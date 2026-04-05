@@ -27,6 +27,27 @@ function switchPage(page) {
   if (page === 'agent') loadAgentProfiles();
 }
 
+// --- New chat / new task ---
+
+function newChat() {
+  activeSessionId = null;
+  document.getElementById('chat-messages').innerHTML = '';
+}
+
+function newAgentTask() {
+  activeSessionId = null;
+  agentRunning = false;
+  activeAgents = {};
+  delegationEvents = {};
+  updateStatusPanel();
+  if (delegationPanelOpen) {
+    renderDelegationTree();
+    closeDelegationDetail();
+  }
+  document.getElementById('agent-messages').innerHTML = '';
+  document.getElementById('agent-input').focus();
+}
+
 // --- Auto-resize textareas ---
 
 function autoResize(el) {

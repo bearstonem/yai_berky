@@ -1272,6 +1272,24 @@ body {
 }
 
 /* Toggle button */
+.new-chat-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-left: auto;
+}
+
+.new-chat-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+  border-color: var(--success);
+}
+
 .deleg-toggle-btn {
   padding: 6px 12px;
   font-size: 12px;
