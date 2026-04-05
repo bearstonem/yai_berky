@@ -14,6 +14,7 @@ type IntegrationType string
 const (
 	IntegrationComfyUI IntegrationType = "comfyui"
 	IntegrationWebhook IntegrationType = "webhook"
+	IntegrationMCP     IntegrationType = "mcp"
 )
 
 // IntegrationConfig stores the configuration for a single external tool integration.
@@ -26,17 +27,26 @@ type IntegrationConfig struct {
 	Workflow json.RawMessage `json:"workflow,omitempty"`
 	// Webhook-specific: HTTP method
 	Method string `json:"method,omitempty"`
+	// MCP-specific: command for stdio transport
+	Command string `json:"command,omitempty"`
+	// MCP-specific: arguments for stdio transport
+	Args []string `json:"args,omitempty"`
+	// MCP-specific: environment variables for stdio transport
+	Env map[string]string `json:"env,omitempty"`
+	// MCP-specific: transport type (stdio, http, https)
+	Transport string `json:"transport,omitempty"`
 	// Generic metadata
 	Enabled bool `json:"enabled"`
 }
 
 // IntegrationTypeInfo describes an available integration type for interactive setup.
 type IntegrationTypeInfo struct {
-	Type        IntegrationType
-	DisplayName string
-	Description string
-	NeedsAPIKey bool
+	Type          IntegrationType
+	DisplayName   string
+	Description   string
+	NeedsAPIKey   bool
 	NeedsWorkflow bool
+	NeedsCommand  bool
 }
 
 // AvailableIntegrations returns the list of supported integration types.
@@ -55,6 +65,13 @@ func AvailableIntegrations() []IntegrationTypeInfo {
 			Description:   "Call an arbitrary HTTP endpoint as a tool",
 			NeedsAPIKey:   true,
 			NeedsWorkflow: false,
+		},
+		{
+			Type:         IntegrationMCP,
+			DisplayName:  "MCP Server",
+			Description:  "Connect to a Model Context Protocol (MCP) server for tool discovery and execution",
+			NeedsAPIKey:  false,
+			NeedsCommand: true,
 		},
 	}
 }

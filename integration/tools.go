@@ -42,6 +42,18 @@ func BuildTools(integrations []config.IntegrationConfig) []IntegrationTool {
 			tools = append(tools, buildComfyUITool(ic))
 		case config.IntegrationWebhook:
 			tools = append(tools, buildWebhookTool(ic))
+		case config.IntegrationMCP:
+			mcpTools, err := BuildMCPToolDefs(ic)
+			if err != nil {
+				// Log error but don't fail the entire build
+				continue
+			}
+			for _, mt := range mcpTools {
+				tools = append(tools, IntegrationTool{
+					Def:    mt,
+					Config: ic,
+				})
+			}
 		}
 	}
 	return tools
@@ -111,6 +123,8 @@ func Execute(tool IntegrationTool, argsJSON string) ToolResult {
 		return executeComfyUI(tool, argsJSON)
 	case config.IntegrationWebhook:
 		return executeWebhook(tool, argsJSON)
+	case config.IntegrationMCP:
+		return ExecuteMCPTool(tool.Config, tool.Def.Name, argsJSON)
 	default:
 		return ToolResult{Content: fmt.Sprintf("error: unknown integration type %s", tool.Config.Type)}
 	}
