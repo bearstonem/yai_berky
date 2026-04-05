@@ -223,18 +223,27 @@ func (r *Renderer) RenderRemoteInfo(host string, hostname string, os string) str
 }
 
 func (r *Renderer) RenderHelpMessage() string {
-	help := "**Helm** — AI Agent Platform\n\n"
+	help := "```\n"
+	help += "  ██╗  ██╗███████╗██╗     ███╗   ███╗\n"
+	help += "  ██║  ██║██╔════╝██║     ████╗ ████║\n"
+	help += "  ███████║█████╗  ██║     ██╔████╔██║\n"
+	help += "  ██╔══██║██╔══╝  ██║     ██║╚██╔╝██║\n"
+	help += "  ██║  ██║███████╗███████╗██║ ╚═╝ ██║\n"
+	help += "  ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝     ╚═╝\n"
+	help += "```\n"
+	help += "**AI Agent Platform** — autonomous agents, skills, and evolution\n\n"
 	help += "**Keyboard:**\n"
 	help += "- `tab`   : switch between `▶ exec`, `📡 chat`, and `🖖 agent` modes\n"
 	help += "- `↑`/`↓` : navigate in history\n"
 	help += "- `alt+enter` / `ctrl+j`: insert newline\n"
 	help += "- `ctrl+h`: help  `ctrl+s`: settings  `ctrl+r`: reset  `ctrl+l`: clear  `ctrl+c`: quit\n\n"
 	help += "**Commands:** `/help` `/clear` `/reset` `/compact` `/cost` `/session` `/mode` `/model` `/yolo` `/integrate` `/skill` `/memory` `/diff` `/commit` `/status` `/log`\n\n"
-	help += "**Agent mode:** autonomously runs commands, reads/writes files, delegates to sub-agents, creates skills.\n"
+	help += "**Agent mode:** autonomously runs commands, reads/writes files, delegates to sub-agents, creates skills, and manages goals.\n"
 	help += "Use `/yolo` to toggle auto-execute. Set `USER_AGENT_AUTO_EXECUTE` in settings.\n\n"
-	help += "**Web GUI:** run `helm --gui` for full dashboard with agents, skills, themes, and self-improvement.\n"
-	help += "**Pipe mode:** `helm --pipe -a \"task\"` for headless operation (scripts/CI).\n"
-	help += "**Remote:** `helm --remote user@host task` for SSH agent mode.\n\n"
+	help += "**Web GUI:** `helm --gui` — full dashboard with agent management, skill builder, evolution engine, and themes.\n"
+	help += "**Pipe mode:** `helm --pipe -a \"task\"` — headless operation for scripts and CI.\n"
+	help += "**Remote:** `helm --remote user@host task` — SSH agent mode.\n"
+	help += "**Setup:** `helm --setup` — interactive configuration wizard.\n\n"
 	help += "**Permissions:** `USER_PERMISSION_MODE` = `read-only`, `workspace-write` (default), `full-access`.\n"
 
 	return help
