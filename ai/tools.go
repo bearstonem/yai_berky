@@ -258,7 +258,7 @@ func AgentTools() []Tool {
 	return []Tool{
 		{
 			Name:        "run_command",
-			Description: "Execute a shell command and return its stdout, stderr, and exit code. Use for running programs, installing packages, checking system state, etc.",
+			Description: "Execute a shell command and return its stdout, stderr, and exit code. Commands time out after 60 seconds. NEVER start long-running processes (dev servers, watchers, daemons) — they will hang until timeout. Use for short-lived commands only: builds, installs, tests, file operations, git.",
 			Parameters:  runCommandSchema,
 		},
 		{

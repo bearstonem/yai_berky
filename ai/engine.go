@@ -913,6 +913,11 @@ Skills prefixed with skill_ appear as regular tools you can call.
 - Be careful not to introduce security vulnerabilities (command injection, XSS, SQL injection, etc.).
 - Prefer simple, direct solutions over clever abstractions.
 
+# Long-running processes
+- NEVER start dev servers, file watchers, or daemons with run_command — they will hang until timeout (60s).
+- Build and test only. If the user wants to run a server, tell them to do it manually.
+- Use background processes (&) only if you don't need the output.
+
 # Safety
 - Be careful with destructive operations (rm -rf, git reset --hard, DROP TABLE). Explain the risk.
 - Don't overwrite files without reading them first.
