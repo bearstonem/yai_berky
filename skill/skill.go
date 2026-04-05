@@ -54,8 +54,12 @@ func LoadAll(homeDir string) ([]Manifest, error) {
 		if err := json.Unmarshal(data, &m); err != nil {
 			continue
 		}
-		// Fix double-encoded parameters (string instead of object)
-		m.Parameters = fixParameters(m.Parameters)
+		// Validate and fix parameters — skip skills with unfixable schemas
+		if validated, err := ValidateParameters(m.Parameters); err == nil {
+			m.Parameters = validated
+		} else {
+			continue
+		}
 		skills = append(skills, m)
 	}
 	return skills, nil
@@ -68,8 +72,12 @@ func Create(homeDir string, name, description, language, scriptContent string, p
 		return nil, fmt.Errorf("invalid skill name: %q", name)
 	}
 
-	// Ensure parameters are not double-encoded
-	parameters = fixParameters(parameters)
+	// Validate and sanitize parameters to ensure they form a valid JSON Schema
+	var err error
+	parameters, err = ValidateParameters(parameters)
+	if err != nil {
+		return nil, fmt.Errorf("invalid parameters schema: %w", err)
+	}
 
 	dir := filepath.Join(SkillsDir(homeDir), safeName)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -118,7 +126,10 @@ func Update(homeDir string, name, description, language, scriptContent string, p
 		return nil, fmt.Errorf("skill %q not found", name)
 	}
 
-	parameters = fixParameters(parameters)
+	parameters, err := ValidateParameters(parameters)
+	if err != nil {
+		return nil, fmt.Errorf("invalid parameters schema: %w", err)
+	}
 
 	// Load existing manifest to preserve created_at
 	var existing Manifest
@@ -227,6 +238,66 @@ func sanitizeName(name string) string {
 		}
 	}
 	return b.String()
+}
+
+// ValidateParameters checks that a parameters JSON blob is a valid JSON Schema
+// object suitable for use as a tool input_schema. Returns a sanitized version
+// or a safe default if the input is invalid.
+func ValidateParameters(params json.RawMessage) (json.RawMessage, error) {
+	params = fixParameters(params)
+
+	if len(params) == 0 {
+		return json.RawMessage(`{"type":"object","properties":{}}`), nil
+	}
+
+	// Must be valid JSON
+	if !json.Valid(params) {
+		return nil, fmt.Errorf("parameters is not valid JSON")
+	}
+
+	// Must be a JSON object
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(params, &obj); err != nil {
+		return nil, fmt.Errorf("parameters must be a JSON object: %w", err)
+	}
+
+	// Must have "type" field set to "object"
+	typeVal, hasType := obj["type"]
+	if !hasType {
+		// Add "type": "object" if missing
+		obj["type"] = json.RawMessage(`"object"`)
+	} else {
+		var t string
+		if err := json.Unmarshal(typeVal, &t); err != nil || t != "object" {
+			obj["type"] = json.RawMessage(`"object"`)
+		}
+	}
+
+	// Ensure "properties" exists
+	if _, hasProp := obj["properties"]; !hasProp {
+		obj["properties"] = json.RawMessage(`{}`)
+	} else {
+		// Validate that properties is an object
+		var props map[string]json.RawMessage
+		if err := json.Unmarshal(obj["properties"], &props); err != nil {
+			obj["properties"] = json.RawMessage(`{}`)
+		}
+	}
+
+	// Validate "required" if present — must be an array of strings
+	if req, hasReq := obj["required"]; hasReq {
+		var arr []string
+		if err := json.Unmarshal(req, &arr); err != nil {
+			// Remove invalid required field
+			delete(obj, "required")
+		}
+	}
+
+	result, err := json.Marshal(obj)
+	if err != nil {
+		return json.RawMessage(`{"type":"object","properties":{}}`), nil
+	}
+	return json.RawMessage(result), nil
 }
 
 func extensionForLanguage(lang string) string {

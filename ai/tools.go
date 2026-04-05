@@ -542,10 +542,16 @@ func (te *ToolExecutor) AllTools() []Tool {
 		})
 	}
 	for _, s := range te.skills {
+		// Validate skill parameters before exposing as a tool — skip malformed skills
+		// to prevent LLM provider errors from breaking all tool calls
+		params, err := skill.ValidateParameters(s.Parameters)
+		if err != nil {
+			continue
+		}
 		tools = append(tools, Tool{
 			Name:        s.ToolName(),
 			Description: s.Description,
-			Parameters:  s.Parameters,
+			Parameters:  params,
 		})
 	}
 	// Add agent profiles as callable tools
