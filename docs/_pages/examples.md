@@ -4,7 +4,7 @@ classes: wide
 permalink: /examples/
 ---
 
-> The examples below use `yo` as command name, but it has been renamed meanwhile in `helm`.
+> Note: Some examples below show older command names (`yo` or `yai`). The current command is `helm`.
 
 ## CLI mode
 

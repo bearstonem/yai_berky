@@ -45,7 +45,8 @@ type Server struct {
 	selfImproveCancel   context.CancelFunc
 	selfImproveEngine   *ai.Engine
 	selfImproveChan     chan ai.AgentEvent
-	selfImproveInterval time.Duration
+	selfImproveInterval  time.Duration
+	selfImproveDirective string // user's prime directive
 }
 
 // NewServer creates a new web server.
@@ -970,7 +971,8 @@ func (s *Server) handleSelfImproveStart(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req struct {
-		IntervalMinutes int `json:"interval_minutes"`
+		IntervalMinutes int    `json:"interval_minutes"`
+		PrimeDirective  string `json:"prime_directive"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 	if req.IntervalMinutes <= 0 {
@@ -982,6 +984,7 @@ func (s *Server) handleSelfImproveStart(w http.ResponseWriter, r *http.Request) 
 	s.selfImproveCancel = cancel
 	s.selfImproveCycle = 0
 	s.selfImproveInterval = time.Duration(req.IntervalMinutes) * time.Minute
+	s.selfImproveDirective = req.PrimeDirective
 	s.selfImproveChan = make(chan ai.AgentEvent, 100)
 	s.mu.Unlock()
 
@@ -1023,6 +1026,7 @@ func (s *Server) handleSelfImproveStatus(w http.ResponseWriter, r *http.Request)
 		"running":          s.selfImproveRunning,
 		"cycle":            s.selfImproveCycle,
 		"interval_minutes": int(s.selfImproveInterval.Minutes()),
+		"prime_directive":  s.selfImproveDirective,
 	}
 	s.mu.Unlock()
 
@@ -1175,9 +1179,29 @@ func (s *Server) runSelfImproveCycle(ctx context.Context) {
 	s.selfImproveEngine = engine
 	s.mu.Unlock()
 
+	// Build the prompt with prime directive
+	prompt := selfImprovePrompt
+	s.mu.Lock()
+	directive := s.selfImproveDirective
+	s.mu.Unlock()
+	if directive != "" {
+		prompt = "# PRIME DIRECTIVE\n" +
+			"Your overriding mission is: " + directive + "\n" +
+			"All self-improvement activities MUST align with this directive. " +
+			"Every goal you create, skill you build, and agent you spawn should serve this purpose.\n\n" +
+			prompt
+	} else {
+		prompt = "# AUTONOMOUS MODE\n" +
+			"No prime directive has been set. You are fully self-guiding.\n" +
+			"Research what would be most useful, set your own direction, and pursue it.\n" +
+			"If this is your first cycle, start by researching what capabilities would be most valuable, " +
+			"then create foundational goals based on your findings.\n\n" +
+			prompt
+	}
+
 	done := make(chan struct{})
 	go func() {
-		engine.AgentCompletion(selfImprovePrompt, true)
+		engine.AgentCompletion(prompt, true)
 		close(engine.GetAgentChannel())
 		close(done)
 	}()

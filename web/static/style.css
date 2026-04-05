@@ -202,6 +202,7 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 19.2px; /* base 16px + 20% */
   background: var(--bg);
   color: var(--text);
   height: 100vh;
@@ -1452,24 +1453,20 @@ body {
 }
 
 /* Toggle button */
-/* Self-improve */
-.self-improve-btn {
-  padding: 6px 12px;
-  font-size: 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--success);
-  background: rgba(63, 185, 80, 0.1);
+/* Self-improve button in toolbar */
+#self-improve-btn {
+  border-color: var(--success);
   color: var(--success);
-  cursor: pointer;
-  transition: all 0.15s;
 }
 
-.self-improve-btn:hover { background: rgba(63, 185, 80, 0.2); }
+#self-improve-btn:hover {
+  background: rgba(63, 185, 80, 0.15);
+}
 
-.self-improve-btn.running {
+#self-improve-btn.running {
   border-color: var(--warning);
-  background: rgba(210, 153, 34, 0.15);
   color: var(--warning);
+  background: rgba(210, 153, 34, 0.1);
   animation: pulse 2s infinite;
 }
 
@@ -1505,6 +1502,44 @@ body {
   color: var(--accent-hover);
 }
 
+.si-directive {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.si-directive-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 5px;
+}
+
+.si-directive-hint {
+  font-weight: 400;
+  color: var(--text-dimmer);
+}
+
+.si-directive-row {
+  display: flex;
+  gap: 6px;
+}
+
+.si-directive-input {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius);
+  font-size: 12px;
+  outline: none;
+}
+
+.si-directive-input:focus { border-color: var(--accent); }
+
+.si-directive-input::placeholder { color: var(--text-dimmer); }
+
 .si-goals {
   display: flex;
   flex-wrap: wrap;
@@ -1533,42 +1568,98 @@ body {
   font-size: 12px;
 }
 
-.new-chat-btn {
-  padding: 6px 12px;
+/* Agent/Chat toolbar */
+.agent-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolbar-title {
+  font-size: 18px;
+}
+
+.toolbar-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.toolbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
   font-size: 12px;
+  font-weight: 500;
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
   transition: all 0.15s;
-  margin-left: auto;
 }
 
-.new-chat-btn:hover {
+.toolbar-btn:hover {
   background: var(--bg-hover);
   color: var(--text);
-  border-color: var(--success);
+  border-color: var(--text-dim);
 }
 
-.deleg-toggle-btn {
-  padding: 6px 12px;
-  font-size: 12px;
-  border-radius: var(--radius);
+.toolbar-icon {
+  font-size: 13px;
+}
+
+/* Flow edge tab — vertical tab on right edge */
+.flow-edge-tab {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  writing-mode: vertical-lr;
+  text-orientation: mixed;
+  padding: 12px 5px;
+  background: var(--bg-surface);
   border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-dim);
+  border-right: none;
+  border-radius: var(--radius) 0 0 var(--radius);
+  color: var(--text-dimmer);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 3px;
   cursor: pointer;
-  transition: all 0.15s;
-  margin-left: auto;
+  transition: all 0.2s;
+  z-index: 20;
+  display: flex;
+  gap: 2px;
 }
 
-.deleg-toggle-btn:hover { background: var(--bg-hover); color: var(--text); }
+.flow-edge-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+  padding-right: 8px;
+}
 
-.deleg-toggle-btn.has-activity {
+.flow-edge-tab.has-activity {
+  background: var(--accent-dim);
   border-color: var(--accent);
   color: var(--accent-hover);
-  background: var(--accent-dim);
+  animation: pulse 2s infinite;
 }
 
 /* Responsive */

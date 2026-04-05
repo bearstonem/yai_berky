@@ -1,31 +1,50 @@
-# 🚀 Yai Roadmap: Claude Code Parity
+# Helm Roadmap
 
-This document tracks the implementation of specialized software engineering features to bring Yai closer to the capabilities of Claude Code.
+## Completed
 
-## 🛠️ Version Control Integration
-- [ ] **Native Git Workflows**: Implement high-level commands for common Git operations.
-  - [ ] Automated commit message generation based on diffs.
-  - [ ] PR description drafting using `gh` CLI integration.
-  - [ ] Branch intent analysis using `git log`.
-- [ ] **Git-aware Context**: Automatically include current branch and status in the agent's system prompt.
+- Multi-provider support (OpenAI, Anthropic, OpenRouter, MiniMax, Ollama, llama.cpp, LM Studio)
+- Agent mode with autonomous tool execution (run_command, read/write/edit_file, search, find)
+- Skills system — agent-created reusable tools (bash, python, node, ruby)
+- Vector memory — sqlite-vec conversation recall with embeddings
+- Multi-agent orchestration — delegation, escalation, cycle detection, parallel execution
+- Agents as callable tools — assign agents to other agents
+- Self-improvement loop — goals, prime directive, backup/restore, restart
+- Web GUI — dashboard with themes, AI builders, delegation flow, sessions
+- Pipe mode (`--pipe`) and remote SSH mode (`--remote`)
+- Permission modes, hooks, integrations (ComfyUI, Webhook)
+- Session management with save/load/resume
+- Multiline input, slash commands, model switching
 
-## 🔍 Codebase Intelligence
-- [ ] **Semantic Search/Indexing**: Move beyond basic `grep`.
-  - [ ] Implement a symbol map (functions, classes, variables) for faster navigation.
-  - [ ] Integration with local embeddings or a lightweight index for "where is X" queries.
-- [ ] **Smart File Discovery**: Improved heuristics for finding relevant files based on the task description.
+## In Progress
 
-## ✍️ Intelligent Editing
-- [ ] **Patch-based Editing**: Implement a tool to modify specific lines or blocks instead of full file overwrites.
-  - [ ] Support for `Search-and-Replace` blocks.
-  - [ ] Integration of a diff-based update mechanism to reduce token usage and prevent data loss.
+- Self-improvement loop iteration quality
+- Agent collaboration patterns (reviewer + builder workflows)
+- Skill testing and reliability improvements
 
-## 🧪 Test-Fix-Verify Loop
-- [ ] **Automated Test Loop**: Create a specialized mode for iterative debugging.
-  - [ ] Command to "Run tests until pass" with automatic fixing.
-  - [ ] Integration with common test runners (npm, pytest, go test) to parse failures and feed them back to the agent.
+## Planned
 
-## 🧠 Project Context & Memory
-- [ ] **Persistent Project Memory**: Implement a local storage mechanism for project-specific knowledge.
-  - [ ] Storage for architectural decisions, naming conventions, and "gotchas".
-  - [ ] Ability for the agent to read/write to this knowledge base across different sessions.
+### Agent Intelligence
+- Long-term memory with semantic search across sessions
+- Agent-to-agent direct messaging (beyond delegation)
+- Shared workspaces between concurrent agents
+- Agent performance metrics and auto-tuning
+- Context window management and summarization
+
+### Platform
+- Plugin system for community-contributed skills
+- OAuth/auth for web GUI (multi-user support)
+- WebSocket for real-time GUI updates (replace SSE)
+- Token budget per agent/cycle for cost control
+- Streaming in all contexts (builders currently non-streaming)
+
+### Developer Experience
+- `helm init` for project scaffolding with HELM.md
+- LSP integration for code-aware editing
+- Test runner integration (npm, pytest, go test)
+- Sandbox mode for safe experimentation
+- CI/CD integration templates
+
+### Distribution
+- Pre-built binaries for Linux/macOS/Windows
+- Docker image
+- Homebrew formula

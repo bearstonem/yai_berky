@@ -16,8 +16,10 @@ function switchPage(page) {
   document.getElementById('page-' + page).classList.add('active');
   document.querySelector('[data-page="' + page + '"]').classList.add('active');
 
-  // Close delegation panel when leaving agent page
+  // Close delegation panel when leaving agent page, hide flow tab
   if (page !== 'agent' && delegationPanelOpen) closeDelegationPanel();
+  const flowTab = document.getElementById('deleg-toggle');
+  if (flowTab) flowTab.style.display = page === 'agent' ? '' : 'none';
 
   // Load data for the page
   if (page === 'skills') loadSkills();
@@ -191,12 +193,16 @@ function scheduleDelegTreeRender() {
 function openDelegationPanel() {
   document.getElementById('delegation-panel').classList.remove('hidden');
   delegationPanelOpen = true;
+  const tab = document.getElementById('deleg-toggle');
+  if (tab) tab.style.right = '340px';
   renderDelegationTree();
 }
 
 function closeDelegationPanel() {
   document.getElementById('delegation-panel').classList.add('hidden');
   delegationPanelOpen = false;
+  const tab = document.getElementById('deleg-toggle');
+  if (tab) tab.style.right = '0';
 }
 
 function toggleDelegationPanel() {
@@ -1934,12 +1940,30 @@ async function toggleSelfImprove() {
   }
 }
 
+function savePrimeDirective() {
+  const val = document.getElementById('si-directive-input').value.trim();
+  localStorage.setItem('helm-prime-directive', val);
+}
+
+function clearPrimeDirective() {
+  document.getElementById('si-directive-input').value = '';
+  localStorage.removeItem('helm-prime-directive');
+}
+
+function loadPrimeDirective() {
+  const saved = localStorage.getItem('helm-prime-directive') || '';
+  const input = document.getElementById('si-directive-input');
+  if (input) input.value = saved;
+  return saved;
+}
+
 async function startSelfImprove() {
+  const directive = loadPrimeDirective();
   try {
     const res = await fetch(API + '/api/self-improve/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ interval_minutes: 5 })
+      body: JSON.stringify({ interval_minutes: 5, prime_directive: directive })
     });
     if (!res.ok) {
       const err = await res.json();
@@ -1956,6 +1980,7 @@ async function startSelfImprove() {
   document.getElementById('self-improve-btn').classList.add('running');
   document.getElementById('self-improve-panel').classList.remove('hidden');
   document.getElementById('si-log').innerHTML = '';
+  loadPrimeDirective();
 
   loadSelfImproveGoals();
   connectSelfImproveStream();
@@ -2122,6 +2147,7 @@ async function checkSelfImproveStatus() {
       document.getElementById('self-improve-btn').classList.add('running');
       document.getElementById('self-improve-panel').classList.remove('hidden');
       document.getElementById('si-cycle-badge').textContent = 'Cycle ' + status.cycle;
+      loadPrimeDirective();
       loadSelfImproveGoals();
       connectSelfImproveStream();
     }
@@ -2200,3 +2226,6 @@ loadSavedTheme();
 loadMemoryStats();
 loadConfig().catch(() => {});
 checkSelfImproveStatus();
+// Hide flow tab until agent page is active
+const _flowTab = document.getElementById('deleg-toggle');
+if (_flowTab) _flowTab.style.display = 'none';

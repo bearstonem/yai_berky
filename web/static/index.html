@@ -43,10 +43,16 @@
   <main id="content">
     <!-- Chat Page -->
     <div id="page-chat" class="page active">
-      <div class="page-header">
-        <h1>Chat</h1>
-        <span class="page-desc">Ask questions, get answers</span>
-        <button class="new-chat-btn" onclick="newChat()" title="Start a new conversation">+ New Chat</button>
+      <div class="agent-toolbar">
+        <div class="toolbar-left">
+          <span class="toolbar-title" data-icon="chat">&#x1F4E1;</span>
+          <span class="toolbar-label">Chat</span>
+        </div>
+        <div class="toolbar-actions">
+          <button class="toolbar-btn" onclick="newChat()" title="Start a new conversation">
+            <span class="toolbar-icon">+</span> New
+          </button>
+        </div>
       </div>
       <div id="chat-messages" class="message-area"></div>
       <div class="input-bar">
@@ -58,16 +64,25 @@
 
     <!-- Primary Agent Page -->
     <div id="page-agent" class="page">
-      <div class="page-header">
-        <h1>Primary Agent</h1>
-        <span class="page-desc">Give tasks, watch the AI work autonomously</span>
-        <button class="new-chat-btn" onclick="newAgentTask()" title="Start a new task">+ New Task</button>
-        <button class="self-improve-btn" id="self-improve-btn" onclick="toggleSelfImprove()" title="Start autonomous self-improvement loop">&#x1F504; Self-Improve</button>
-        <button class="deleg-toggle-btn" id="deleg-toggle" onclick="toggleDelegationPanel()" title="Show delegation flow">&#x269B; Flow</button>
-        <select id="agent-profile-select" class="profile-select" onchange="onAgentProfileChange()">
-          <option value="">Primary Agent</option>
-        </select>
+      <div class="agent-toolbar">
+        <div class="toolbar-left">
+          <select id="agent-profile-select" class="profile-select" onchange="onAgentProfileChange()">
+            <option value="">Primary Agent</option>
+          </select>
+        </div>
+        <div class="toolbar-actions">
+          <button class="toolbar-btn" onclick="newAgentTask()" title="Start a new task">
+            <span class="toolbar-icon">+</span> New
+          </button>
+          <button class="toolbar-btn" id="self-improve-btn" onclick="toggleSelfImprove()" title="Start autonomous self-improvement loop">
+            <span class="toolbar-icon">&#x1F504;</span> Evolve
+          </button>
+        </div>
       </div>
+      <!-- Flow tab on right edge -->
+      <button class="flow-edge-tab" id="deleg-toggle" onclick="toggleDelegationPanel()" title="Delegation flow">
+        <span>F</span><span>L</span><span>O</span><span>W</span>
+      </button>
       <div id="agent-profile-info" class="profile-info hidden"></div>
       <div id="agent-status-panel" class="agent-status-panel hidden"></div>
       <div id="self-improve-panel" class="self-improve-panel hidden">
@@ -75,6 +90,15 @@
           <span id="si-status-text">&#x1F504; Self-Improvement Loop</span>
           <span id="si-cycle-badge" class="si-cycle-badge">Cycle 0</span>
           <button class="card-btn danger" onclick="stopSelfImprove()" style="margin-left:auto">Stop</button>
+        </div>
+        <div class="si-directive">
+          <div class="si-directive-label">&#x2726; Prime Directive <span class="si-directive-hint">(leave empty for fully autonomous)</span></div>
+          <div class="si-directive-row">
+            <input type="text" id="si-directive-input" class="si-directive-input"
+              placeholder="e.g. Focus on building DevOps automation tools..."
+              onchange="savePrimeDirective()">
+            <button class="toolbar-btn" onclick="clearPrimeDirective()" title="Clear directive">&#x2715;</button>
+          </div>
         </div>
         <div id="si-goals" class="si-goals"></div>
         <div id="si-log" class="message-area si-log"></div>
