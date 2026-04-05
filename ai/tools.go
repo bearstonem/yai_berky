@@ -1,10 +1,13 @@
 package ai
 
 import (
+	"context"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,6 +20,24 @@ import (
 	"github.com/bearstonem/helm/run"
 	"github.com/bearstonem/helm/skill"
 )
+
+//go:embed builtin_skills/web_search.js
+var webSearchScript string
+
+var webSearchSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"query": {
+			"type": "string",
+			"description": "The search query"
+		},
+		"count": {
+			"type": "integer",
+			"description": "Number of results (default 10)"
+		}
+	},
+	"required": ["query"]
+}`)
 
 var runCommandSchema = json.RawMessage(`{
 	"type": "object",
@@ -320,6 +341,11 @@ var updateGoalSchema = json.RawMessage(`{
 func AgentTools() []Tool {
 	return []Tool{
 		{
+			Name:        "web_search",
+			Description: "Search the web using Brave Search API. Returns titles, URLs, and descriptions. Requires BRAVE_API_KEY environment variable. Use for research, fact-checking, finding documentation, current events.",
+			Parameters:  webSearchSchema,
+		},
+		{
 			Name:        "run_command",
 			Description: "Execute a shell command and return its stdout, stderr, and exit code. Commands time out after 60 seconds. NEVER start long-running processes (dev servers, watchers, daemons) — they will hang until timeout. Use for short-lived commands only: builds, installs, tests, file operations, git.",
 			Parameters:  runCommandSchema,
@@ -571,6 +597,8 @@ func (te *ToolExecutor) Execute(tc ToolCall) ToolResult {
 	var diff string
 
 	switch tc.Name {
+	case "web_search":
+		content = te.executeWebSearch(tc.Arguments)
 	case "run_command":
 		content = te.executeRunCommand(tc.Arguments)
 	case "read_file":
@@ -649,6 +677,42 @@ func (te *ToolExecutor) Execute(tc ToolCall) ToolResult {
 		Content:    content,
 		Diff:       diff,
 	}
+}
+
+func (te *ToolExecutor) executeWebSearch(argsJSON string) string {
+	// Write the embedded script to a temp file and execute it
+	tmpFile, err := os.CreateTemp("", "helm-web-search-*.js")
+	if err != nil {
+		return fmt.Sprintf("error creating temp file: %s", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.WriteString(webSearchScript); err != nil {
+		tmpFile.Close()
+		return fmt.Sprintf("error writing script: %s", err)
+	}
+	tmpFile.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "node", tmpFile.Name())
+	cmd.Stdin = strings.NewReader(argsJSON)
+	cmd.Env = os.Environ()
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if len(output) > 0 {
+			return string(output)
+		}
+		return fmt.Sprintf("error: %s", err)
+	}
+
+	result := strings.TrimSpace(string(output))
+	if len(result) > 50000 {
+		result = result[:50000] + "... (truncated)"
+	}
+	return result
 }
 
 func (te *ToolExecutor) executeRunCommand(argsJSON string) string {

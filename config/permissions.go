@@ -53,6 +53,7 @@ const (
 
 // ToolPermissions maps tool names to their required permission level.
 var ToolPermissions = map[string]ToolPermission{
+	"web_search":      ToolPermRead,
 	"read_file":      ToolPermRead,
 	"list_directory":  ToolPermRead,
 	"search_files":    ToolPermRead,

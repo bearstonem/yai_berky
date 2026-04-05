@@ -186,6 +186,7 @@ helm --remote user@host task   # remote SSH
 
 | Tool | Description |
 |---|---|
+| `web_search` | Search the web via Brave Search API (built-in, requires `BRAVE_API_KEY`) |
 | `run_command` | Execute shell commands (60s timeout) |
 | `read_file` | Read file contents |
 | `write_file` | Create or overwrite files |
