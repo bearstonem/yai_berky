@@ -847,7 +847,18 @@ func (e *Engine) prepareSystemPromptChatPart() string {
 }
 
 func (e *Engine) prepareSystemPromptAgentPart() string {
-	prompt := "You are Helm, an autonomous terminal agent. You help the user accomplish software engineering and system administration tasks.\n\n"
+	prompt := "You are Helm, an autonomous terminal agent.\n\n"
+
+	// DELEGATION FIRST — this is the primary agent's most important instruction
+	if len(e.delegationChain) == 0 {
+		delegationBlock := e.prepareAvailableAgents()
+		if delegationBlock != "" {
+			prompt += delegationBlock + "\n"
+		}
+	} else {
+		// Sub-agent: collaborative instructions
+		prompt += e.prepareAvailableAgents() + "\n"
+	}
 
 	if e.remoteHost != "" {
 		prompt += fmt.Sprintf("IMPORTANT: You are operating on a REMOTE host via SSH (%s).\n", e.remoteHost)
@@ -913,11 +924,6 @@ Skills prefixed with skill_ appear as regular tools you can call.
 		prompt += "- Do NOT use sudo in commands. If elevated privileges are needed, inform the user.\n"
 	} else {
 		prompt += "- You may use sudo when commands require elevated privileges.\n"
-	}
-
-	// Add delegation instructions and available sub-agents
-	if len(e.delegationChain) == 0 {
-		prompt += e.prepareAvailableAgents()
 	}
 
 	return prompt
@@ -1109,56 +1115,90 @@ func (e *Engine) RespondToEscalation(response string) {
 
 // prepareAvailableAgents returns a prompt section listing available agents for collaboration.
 func (e *Engine) prepareAvailableAgents() string {
-	agents, err := agent.LoadAll(e.homeDir)
-	if err != nil || len(agents) == 0 {
-		if len(e.delegationChain) == 0 {
-			return "\n# DELEGATION\nNo sub-agents exist yet. If the user's task needs specialized expertise, create one with `create_agent` then delegate with `delegate_task`.\nYou can also use `escalate_to_user` to ask the user a question at any time.\n"
-		}
-		return "\n# COLLABORATION\nYou can use `escalate_to_user` to ask the user a question at any time.\n"
-	}
+	var b strings.Builder
+	isPrimary := len(e.delegationChain) == 0
 
-	// Filter out self from the list
+	agents, _ := agent.LoadAll(e.homeDir)
+
+	// Filter out self
 	myID := ""
 	if e.agentProfile != nil {
 		myID = e.agentProfile.ID
 	}
-
-	var b strings.Builder
-
-	if len(e.delegationChain) == 0 {
-		// Primary agent: orchestrator role
-		b.WriteString("\n# DELEGATION — IMPORTANT\n")
-		b.WriteString("You are an orchestrator. You have specialized agents available. ")
-		b.WriteString("When a task matches an agent's expertise, you MUST delegate to them using `delegate_task` instead of doing the work yourself.\n\n")
-	} else {
-		// Sub-agent: collaborative role
-		b.WriteString("\n# COLLABORATION\n")
-		b.WriteString("You can ask other agents for help using `delegate_task`, or ask the user a question using `escalate_to_user`.\n\n")
-	}
-
-	b.WriteString("## Available Agents:\n")
+	var otherAgents []agent.Profile
 	for _, a := range agents {
-		if a.ID == myID {
-			continue // don't list self
+		if a.ID != myID {
+			otherAgents = append(otherAgents, a)
 		}
-		tools := "all tools"
-		if len(a.Tools) > 0 {
-			tools = fmt.Sprintf("%d tools", len(a.Tools))
-		}
-		b.WriteString(fmt.Sprintf("- **%s** (id: `%s`, %s): %s\n", a.Name, a.ID, tools, a.Description))
 	}
 
-	b.WriteString("\n## Rules:\n")
-	if len(e.delegationChain) == 0 {
-		b.WriteString("- If an agent's description matches the request, delegate IMMEDIATELY with `delegate_task`.\n")
-		b.WriteString("- For complex tasks, delegate to MULTIPLE agents CONCURRENTLY (multiple `delegate_task` calls in one response).\n")
-		b.WriteString("- If NO agent matches, create one with `create_agent`, then delegate.\n")
-		b.WriteString("- Only do work yourself for simple questions or trivial tasks.\n")
-	} else {
-		b.WriteString("- Delegate to another agent when you need specialized help.\n")
-		b.WriteString("- Use `escalate_to_user` when you need clarification or a decision from the user.\n")
+	// List available skills (skill_* tools)
+	var skillNames []string
+	for _, t := range e.toolExecutor.AllTools() {
+		if len(t.Name) > 6 && t.Name[:6] == "skill_" {
+			skillNames = append(skillNames, t.Name)
+		}
 	}
-	b.WriteString("- Pass relevant context via the `context` parameter when delegating.\n")
+
+	if isPrimary {
+		b.WriteString("\n# DELEGATION — IMPORTANT\n")
+		b.WriteString("You are an orchestrator. Your PRIMARY job is to delegate work to specialized sub-agents, NOT to do work yourself.\n\n")
+
+		if len(otherAgents) > 0 {
+			b.WriteString("## Available Sub-Agents:\n")
+			for _, a := range otherAgents {
+				tools := "all tools"
+				if len(a.Tools) > 0 {
+					tools = fmt.Sprintf("%d tools: %s", len(a.Tools), strings.Join(a.Tools, ", "))
+				}
+				b.WriteString(fmt.Sprintf("- **%s** (id: `%s`, %s): %s\n", a.Name, a.ID, tools, a.Description))
+			}
+			b.WriteString("\n")
+		} else {
+			b.WriteString("No sub-agents exist yet. Create one before doing any substantial work.\n\n")
+		}
+
+		if len(skillNames) > 0 {
+			b.WriteString("## Available Skills:\n")
+			b.WriteString("These skill_* tools can be assigned to agents when creating them: ")
+			b.WriteString(strings.Join(skillNames, ", "))
+			b.WriteString("\n\n")
+		}
+
+		b.WriteString("## Rules:\n")
+		b.WriteString("1. If a sub-agent matches the request, delegate IMMEDIATELY with `delegate_task`.\n")
+		b.WriteString("2. For complex tasks, delegate to MULTIPLE agents CONCURRENTLY (multiple `delegate_task` calls in one response).\n")
+		b.WriteString("3. If NO sub-agent matches, CREATE one first with `create_agent` (give it a good system prompt and assign relevant tools including skill_* tools), then delegate to it.\n")
+		b.WriteString("4. If a task needs a capability that doesn't exist as a skill, create it with `create_skill` first, then assign it to the agent.\n")
+		b.WriteString("5. Use `escalate_to_user` to ask the user for information you need (API keys, preferences, credentials, clarifications).\n")
+		b.WriteString("6. Only do work yourself for simple questions, clarifications, or trivial tasks.\n")
+		b.WriteString("7. When creating agents, include relevant skill_* tools in the tools list so the agent can use them.\n")
+		b.WriteString("8. Pass relevant context via the `context` parameter when delegating.\n")
+	} else {
+		b.WriteString("\n# COLLABORATION\n")
+		b.WriteString("You can collaborate with other agents and the user:\n\n")
+
+		if len(otherAgents) > 0 {
+			b.WriteString("## Other Agents:\n")
+			for _, a := range otherAgents {
+				b.WriteString(fmt.Sprintf("- **%s** (id: `%s`): %s\n", a.Name, a.ID, a.Description))
+			}
+			b.WriteString("\n")
+		}
+
+		if len(skillNames) > 0 {
+			b.WriteString("## Available Skills: ")
+			b.WriteString(strings.Join(skillNames, ", "))
+			b.WriteString("\n\n")
+		}
+
+		b.WriteString("## Rules:\n")
+		b.WriteString("- Use `delegate_task` to ask another agent for help when needed.\n")
+		b.WriteString("- Use `escalate_to_user` when you need clarification, approval, or information from the user.\n")
+		b.WriteString("- If you need a skill that doesn't exist, use `create_skill` to build it.\n")
+		b.WriteString("- Pass context when delegating so the other agent understands the situation.\n")
+	}
+
 	return b.String()
 }
 

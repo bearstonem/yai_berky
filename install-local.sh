@@ -125,16 +125,28 @@ else
     fi
 fi
 
-# ── Migrate config from yai if needed ─────────────────────────────────
+# ── Migrate data from yai if needed ───────────────────────────────────
 
 if [[ -f "$HOME/.config/yai.json" ]] && [[ ! -f "$HOME/.config/helm.json" ]]; then
     cp "$HOME/.config/yai.json" "$HOME/.config/helm.json"
     ok "Migrated config from ~/.config/yai.json → ~/.config/helm.json"
 fi
 
-if [[ -d "$HOME/.config/yai" ]] && [[ ! -d "$HOME/.config/helm" ]]; then
-    cp -r "$HOME/.config/yai" "$HOME/.config/helm"
-    ok "Migrated data from ~/.config/yai/ → ~/.config/helm/"
+# Migrate each subdirectory individually (sessions, skills, agents)
+for subdir in sessions skills agents; do
+    src="$HOME/.config/yai/$subdir"
+    dst="$HOME/.config/helm/$subdir"
+    if [[ -d "$src" ]] && [[ -n "$(ls -A "$src" 2>/dev/null)" ]]; then
+        mkdir -p "$dst"
+        cp -rn "$src"/* "$dst"/ 2>/dev/null && ok "Migrated $subdir from yai → helm"
+    fi
+done
+
+# Migrate memory database
+if [[ -f "$HOME/.config/yai/memory.db" ]] && [[ ! -f "$HOME/.config/helm/memory.db" ]]; then
+    mkdir -p "$HOME/.config/helm"
+    cp "$HOME/.config/yai/memory.db" "$HOME/.config/helm/memory.db"
+    ok "Migrated memory.db from yai → helm"
 fi
 
 # ── Verify ────────────────────────────────────────────────────────────
