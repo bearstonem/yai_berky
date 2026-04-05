@@ -464,6 +464,8 @@ func (e *Engine) SetAgentProfile(p *agent.Profile) {
 	e.agentProfile = p
 	if p != nil && p.Model != "" {
 		e.modelOverride = p.Model
+	} else if p == nil {
+		e.modelOverride = ""
 	}
 }
 

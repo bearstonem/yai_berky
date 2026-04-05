@@ -610,20 +610,14 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create engine in chat mode
-	engine, err := ai.NewEngine(ai.ChatEngineMode, s.config)
-	if err != nil {
-		sseEvent(w, flusher, "error", err.Error())
-		return
-	}
+	// Reuse the server's engine for session continuity
+	engine := s.engine
 
 	if req.SessionID != "" {
 		if err := engine.LoadSession(s.homeDir, req.SessionID); err != nil {
 			sseEvent(w, flusher, "error", "session not found: "+err.Error())
 			return
 		}
-	} else {
-		engine.StartNewSession()
 	}
 
 	// Start streaming
@@ -675,13 +669,10 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	engine, err := ai.NewEngine(ai.AgentEngineMode, s.config)
-	if err != nil {
-		sseEvent(w, flusher, "error", err.Error())
-		return
-	}
+	// Reuse the server's engine for session continuity
+	engine := s.engine
 
-	// Apply agent profile if specified
+	// Apply agent profile if specified (or clear if switching back to primary)
 	if req.AgentID != "" {
 		profile, err := agent.Load(s.homeDir, req.AgentID)
 		if err != nil {
@@ -689,6 +680,8 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		engine.SetAgentProfile(profile)
+	} else {
+		engine.SetAgentProfile(nil)
 	}
 
 	// Resume existing session or start new
@@ -711,9 +704,10 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 	}()
 
-	// Auto-execute all tools in GUI mode
+	// Respect auto-execute config — same behavior as terminal REPL
+	autoExec := s.config.GetUserConfig().GetAgentAutoExecute()
 	go func() {
-		engine.AgentCompletion(req.Message, true)
+		engine.AgentCompletion(req.Message, autoExec)
 	}()
 
 	ch := engine.GetAgentChannel()
