@@ -29,19 +29,59 @@ function Write-Ok    { param([string]$Msg) Write-Host " +  " -ForegroundColor Gr
 function Write-Warn  { param([string]$Msg) Write-Host " !  " -ForegroundColor Yellow -NoNewline; Write-Host $Msg }
 function Write-Fail  { param([string]$Msg) Write-Host " X  " -ForegroundColor Red -NoNewline; Write-Host $Msg; exit 1 }
 
+function Install-WithWinget {
+    param([string]$PackageId, [string]$Name)
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Fail "$Name is not installed and winget is not available to install it automatically.`n  Install $Name manually, then re-run this script."
+    }
+    Write-Warn "$Name not found. Installing via winget..."
+    & winget install --id $PackageId --exact --accept-source-agreements --accept-package-agreements
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail "winget install of $Name failed (exit code $LASTEXITCODE). Install it manually and re-run."
+    }
+    Write-Ok "Installed $Name via winget"
+}
+
+function Refresh-Path {
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $userPath    = [Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path    = "$machinePath;$userPath"
+}
+
 # ── Check prerequisites ─────────────────────────────────────────────
 
 Write-Info "Checking prerequisites"
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    Write-Fail "Docker is not installed or not on PATH.`n  Install Docker Desktop from https://www.docker.com/products/docker-desktop/ and re-run this script."
+    Install-WithWinget "Docker.DockerDesktop" "Docker Desktop"
+    Refresh-Path
+}
+
+if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+    Write-Fail "Docker was installed but is not on PATH yet.`n  Restart your terminal and re-run this script."
 }
 Write-Ok "Docker $(docker --version | ForEach-Object { $_ -replace 'Docker version ','' -replace ',.*','' })"
 
-# Verify Docker daemon is running
+# Verify Docker daemon is running — if not, try to start it
 $null = docker info 2>&1
 if ($LASTEXITCODE -ne 0) {
-    Write-Fail "Docker daemon is not running. Start Docker Desktop and re-run this script."
+    Write-Warn "Docker daemon is not running. Attempting to start Docker Desktop..."
+    Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe" -WindowStyle Minimized -ErrorAction SilentlyContinue
+    $retries = 30
+    $running = $false
+    for ($i = 0; $i -lt $retries; $i++) {
+        Start-Sleep -Seconds 2
+        $null = docker info 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $running = $true
+            break
+        }
+        Write-Host "." -NoNewline
+    }
+    Write-Host ""
+    if (-not $running) {
+        Write-Fail "Docker daemon did not start after 60 seconds.`n  Start Docker Desktop manually and re-run this script."
+    }
 }
 Write-Ok "Docker daemon is running"
 
