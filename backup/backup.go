@@ -3,6 +3,7 @@ package backup
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,29 +75,27 @@ func Create(homeDir, sourceDir, reason string) (*BackupEntry, error) {
 		return nil, fmt.Errorf("create backup dir: %w", err)
 	}
 
-	// Use rsync if available (faster, respects .gitignore-like patterns), otherwise cp
 	// Exclude: .git, vendor, node_modules, build artifacts
-	excludes := []string{".git", "vendor", "node_modules", "helm", "yai", "__pycache__", ".cache"}
-	var cmd *exec.Cmd
+	excludes := map[string]bool{
+		".git": true, "vendor": true, "node_modules": true,
+		"helm": true, "yai": true, "__pycache__": true, ".cache": true,
+	}
+
+	// Use rsync if available (faster), otherwise pure Go copy
 	if _, err := exec.LookPath("rsync"); err == nil {
 		args := []string{"-a", "--delete"}
-		for _, e := range excludes {
+		for e := range excludes {
 			args = append(args, "--exclude", e)
 		}
 		args = append(args, sourceDir+"/", backupPath+"/")
-		cmd = exec.Command("rsync", args...)
+		cmd := exec.Command("rsync", args...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("backup copy failed: %w\n%s", err, string(output))
+		}
 	} else {
-		// Fallback: cp -r then remove excluded dirs
-		cmd = exec.Command("cp", "-r", sourceDir+"/.", backupPath+"/")
-	}
-
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("backup copy failed: %w\n%s", err, string(output))
-	}
-
-	// Remove excluded dirs from backup if we used cp
-	for _, e := range excludes {
-		os.RemoveAll(filepath.Join(backupPath, e))
+		if err := copyDir(sourceDir, backupPath, excludes); err != nil {
+			return nil, fmt.Errorf("backup copy failed: %w", err)
+		}
 	}
 
 	entry := &BackupEntry{
@@ -153,6 +152,7 @@ func Restore(homeDir, sourceDir string) error {
 	}
 
 	// Sync backup over source, preserving .git
+	excludes := map[string]bool{".git": true}
 	if _, err := exec.LookPath("rsync"); err == nil {
 		cmd := exec.Command("rsync", "-a", "--delete", "--exclude", ".git",
 			latest.Path+"/", sourceDir+"/")
@@ -160,7 +160,7 @@ func Restore(homeDir, sourceDir string) error {
 			return fmt.Errorf("restore failed: %w\n%s", err, string(output))
 		}
 	} else {
-		// Fallback: remove source contents (except .git) then copy
+		// Remove source contents (except .git) then copy
 		entries, _ := os.ReadDir(sourceDir)
 		for _, e := range entries {
 			if e.Name() == ".git" {
@@ -168,9 +168,8 @@ func Restore(homeDir, sourceDir string) error {
 			}
 			os.RemoveAll(filepath.Join(sourceDir, e.Name()))
 		}
-		cmd := exec.Command("cp", "-r", latest.Path+"/.", sourceDir+"/")
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("restore copy failed: %w\n%s", err, string(output))
+		if err := copyDir(latest.Path, sourceDir, excludes); err != nil {
+			return fmt.Errorf("restore copy failed: %w", err)
 		}
 	}
 
@@ -190,6 +189,62 @@ func LatestBackup(homeDir string) (*BackupEntry, error) {
 		return manifest.Backups[i].CreatedAt.After(manifest.Backups[j].CreatedAt)
 	})
 	return &manifest.Backups[0], nil
+}
+
+// copyDir recursively copies src to dst, skipping entries in excludes.
+func copyDir(src, dst string, excludes map[string]bool) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Get relative path
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+
+		// Check if any path component is excluded
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		for _, p := range parts {
+			if excludes[p] {
+				if info.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+		}
+
+		target := filepath.Join(dst, rel)
+
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode())
+		}
+
+		return copyFile(path, target, info.Mode())
+	})
+}
+
+// copyFile copies a single file from src to dst.
+func copyFile(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
 }
 
 // GenerateRestartScript creates a shell script that rebuilds and restarts helm.
