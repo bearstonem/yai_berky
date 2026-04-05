@@ -24,7 +24,7 @@ function switchPage(page) {
   // Load data for the page
   if (page === 'skills') loadSkills();
   if (page === 'sessions') loadSessions();
-  if (page === 'settings') { loadConfig(); loadProviders(); renderThemePicker(); }
+  if (page === 'settings') { loadConfig(); loadProviders(); renderThemePicker(); loadSavedFontSize(); }
   if (page === 'agents') loadAgentsList();
   if (page === 'agent') loadAgentProfiles();
 }
@@ -1989,10 +1989,14 @@ async function startSelfImprove() {
   }
 
   selfImproveRunning = true;
-  document.getElementById('self-improve-btn').textContent = '⏹ Stop Loop';
+  document.getElementById('self-improve-btn').textContent = 'Stop';
   document.getElementById('self-improve-btn').classList.add('running');
   document.getElementById('self-improve-panel').classList.remove('hidden');
   document.getElementById('si-log').innerHTML = '';
+  const emptyState = document.getElementById('evolve-empty-state');
+  if (emptyState) emptyState.style.display = 'none';
+  const indicator = document.getElementById('evolve-status-indicator');
+  if (indicator) indicator.classList.add('running');
   loadPrimeDirective();
   loadInterval();
 
@@ -2003,8 +2007,10 @@ async function startSelfImprove() {
 async function stopSelfImprove() {
   await fetch(API + '/api/self-improve/stop', { method: 'POST' }).catch(() => {});
   selfImproveRunning = false;
-  document.getElementById('self-improve-btn').textContent = '🔄 Self-Improve';
+  document.getElementById('self-improve-btn').textContent = 'Start';
   document.getElementById('self-improve-btn').classList.remove('running');
+  const indicator = document.getElementById('evolve-status-indicator');
+  if (indicator) indicator.classList.remove('running');
   if (selfImproveAbort) {
     selfImproveAbort.abort();
     selfImproveAbort = null;
@@ -2157,10 +2163,14 @@ async function checkSelfImproveStatus() {
     const status = await res.json();
     if (status.running) {
       selfImproveRunning = true;
-      document.getElementById('self-improve-btn').textContent = '⏹ Stop Loop';
+      document.getElementById('self-improve-btn').textContent = 'Stop';
       document.getElementById('self-improve-btn').classList.add('running');
       document.getElementById('self-improve-panel').classList.remove('hidden');
       document.getElementById('si-cycle-badge').textContent = 'Cycle ' + status.cycle;
+      const emptyState = document.getElementById('evolve-empty-state');
+      if (emptyState) emptyState.style.display = 'none';
+      const indicator = document.getElementById('evolve-status-indicator');
+      if (indicator) indicator.classList.add('running');
       loadPrimeDirective();
       loadInterval();
       loadSelfImproveGoals();
@@ -2172,13 +2182,13 @@ async function checkSelfImproveStatus() {
 // --- Themes ---
 
 const THEME_ICONS = {
-  '':            { logo: '✦', chat: '📡', agent: '🖖', agents: '🛸', skills: '⚡', sessions: '📋', settings: '⚙️' },
-  'matrix':      { logo: '⌬', chat: '▶',  agent: '◉',  agents: '◈',  skills: '⚙',  sessions: '▤',  settings: '⌘'  },
-  'netrunner':   { logo: '◇', chat: '⟐',  agent: '⬡',  agents: '⬢',  skills: '⚡', sessions: '▥',  settings: '⚙'  },
-  'snowcrash':   { logo: '☣', chat: '⌁',  agent: '⍟',  agents: '⎊',  skills: '⚒',  sessions: '⏣',  settings: '⚙'  },
-  'neuromancer': { logo: '◈', chat: '⌖',  agent: '⍾',  agents: '⎈',  skills: '⚛',  sessions: '☰',  settings: '⚙'  },
-  'bladerunner': { logo: '▲', chat: '◌',  agent: '◎',  agents: '⊛',  skills: '⚡', sessions: '≡',  settings: '⚙'  },
-  'lcars':       { logo: '◆', chat: '▸',  agent: '●',  agents: '◐',  skills: '◇',  sessions: '▪',  settings: '■'  },
+  '':            { logo: '✦', chat: '📡', agent: '🖖', agents: '🛸', skills: '⚡', evolution: '🔄', sessions: '📋', settings: '⚙️' },
+  'matrix':      { logo: '⌬', chat: '▶',  agent: '◉',  agents: '◈',  skills: '⚙',  evolution: '⟳',  sessions: '▤',  settings: '⌘'  },
+  'netrunner':   { logo: '◇', chat: '⟐',  agent: '⬡',  agents: '⬢',  skills: '⚡', evolution: '⥁',  sessions: '▥',  settings: '⚙'  },
+  'snowcrash':   { logo: '☣', chat: '⌁',  agent: '⍟',  agents: '⎊',  skills: '⚒',  evolution: '⟳',  sessions: '⏣',  settings: '⚙'  },
+  'neuromancer': { logo: '◈', chat: '⌖',  agent: '⍾',  agents: '⎈',  skills: '⚛',  evolution: '⥁',  sessions: '☰',  settings: '⚙'  },
+  'bladerunner': { logo: '▲', chat: '◌',  agent: '◎',  agents: '⊛',  skills: '⚡', evolution: '⟳',  sessions: '≡',  settings: '⚙'  },
+  'lcars':       { logo: '◆', chat: '▸',  agent: '●',  agents: '◐',  skills: '◇',  evolution: '◑',  sessions: '▪',  settings: '■'  },
 };
 
 const THEMES = [
@@ -2217,6 +2227,24 @@ function setTheme(themeId) {
   renderThemePicker();
 }
 
+function setFontSize(px) {
+  document.documentElement.style.setProperty('--font-size', px + 'px');
+  localStorage.setItem('helm-font-size', px);
+  const label = document.getElementById('font-size-label');
+  if (label) label.textContent = px + 'px';
+}
+
+function loadSavedFontSize() {
+  const saved = localStorage.getItem('helm-font-size');
+  if (saved) {
+    document.documentElement.style.setProperty('--font-size', saved + 'px');
+    const slider = document.getElementById('font-size-slider');
+    if (slider) slider.value = saved;
+    const label = document.getElementById('font-size-label');
+    if (label) label.textContent = saved + 'px';
+  }
+}
+
 function loadSavedTheme() {
   const saved = localStorage.getItem('helm-theme') || '';
   if (saved) {
@@ -2238,6 +2266,7 @@ function applyThemeIcons(themeId) {
 // --- Init ---
 
 loadSavedTheme();
+loadSavedFontSize();
 loadPrimeDirective();
 loadInterval();
 loadMemoryStats();

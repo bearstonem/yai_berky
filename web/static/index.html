@@ -30,6 +30,9 @@
       <button class="nav-btn" data-page="sessions" onclick="switchPage('sessions')">
         <span class="nav-icon" data-icon="sessions">&#x1F4CB;</span> Sessions
       </button>
+      <button class="nav-btn" data-page="evolution" onclick="switchPage('evolution')">
+        <span class="nav-icon" data-icon="evolution">&#x1F504;</span> Evolution
+      </button>
       <button class="nav-btn" data-page="settings" onclick="switchPage('settings')">
         <span class="nav-icon" data-icon="settings">&#x2699;&#xFE0F;</span> Settings
       </button>
@@ -74,9 +77,6 @@
           <button class="toolbar-btn" onclick="newAgentTask()" title="Start a new task">
             <span class="toolbar-icon">+</span> New
           </button>
-          <button class="toolbar-btn" id="self-improve-btn" onclick="toggleSelfImprove()" title="Start autonomous self-improvement loop">
-            <span class="toolbar-icon">&#x1F504;</span> Evolve
-          </button>
         </div>
       </div>
       <!-- Flow tab on right edge -->
@@ -85,29 +85,6 @@
       </button>
       <div id="agent-profile-info" class="profile-info hidden"></div>
       <div id="agent-status-panel" class="agent-status-panel hidden"></div>
-      <!-- Prime directive + evolve controls — always visible -->
-      <div class="si-directive">
-        <div class="si-directive-row">
-          <span class="si-directive-label" style="margin:0;white-space:nowrap">&#x2726; Prime Directive</span>
-          <input type="text" id="si-directive-input" class="si-directive-input"
-            placeholder="Set a mission for self-improvement (or leave empty for autonomous)..."
-            onchange="savePrimeDirective()">
-          <button class="toolbar-btn" onclick="clearPrimeDirective()" title="Clear directive">&#x2715;</button>
-          <label class="si-directive-label" style="margin:0;line-height:28px;white-space:nowrap">every</label>
-          <input type="number" id="si-interval-input" class="si-directive-input" style="width:50px;flex:none;text-align:center"
-            min="1" max="120" value="5" onchange="saveInterval()">
-          <span class="si-directive-hint" style="line-height:28px">min</span>
-        </div>
-      </div>
-      <div id="self-improve-panel" class="self-improve-panel hidden">
-        <div class="si-header">
-          <span id="si-status-text">&#x1F504; Self-Improvement Loop</span>
-          <span id="si-cycle-badge" class="si-cycle-badge">Cycle 0</span>
-          <button class="card-btn danger" onclick="stopSelfImprove()" style="margin-left:auto">Stop</button>
-        </div>
-        <div id="si-goals" class="si-goals"></div>
-        <div id="si-log" class="message-area si-log"></div>
-      </div>
       <div id="agent-messages" class="message-area"></div>
       <div class="input-bar">
         <textarea id="agent-input" placeholder="Describe a task..." rows="1"
@@ -255,6 +232,54 @@
       </div>
     </div>
 
+    <!-- Evolution Page -->
+    <div id="page-evolution" class="page">
+      <div class="agent-toolbar">
+        <div class="toolbar-left">
+          <span class="toolbar-title" data-icon="evolution">&#x1F504;</span>
+          <span class="toolbar-label">Evolution</span>
+          <span id="evolve-status-indicator" class="evolve-status-indicator"></span>
+        </div>
+        <div class="toolbar-actions">
+          <button class="evolve-btn" id="self-improve-btn" onclick="toggleSelfImprove()">Start</button>
+        </div>
+      </div>
+      <div class="evolve-config-section">
+        <div class="evolve-config-row">
+          <div class="evolve-directive">
+            <label class="evolve-label">Prime Directive</label>
+            <div class="evolve-directive-row">
+              <input type="text" id="si-directive-input" class="evolve-input"
+                placeholder="Mission for self-improvement (empty = autonomous)..."
+                onchange="savePrimeDirective()">
+              <button class="evolve-clear-btn" onclick="clearPrimeDirective()" title="Clear">&#x2715;</button>
+            </div>
+          </div>
+          <div class="evolve-interval">
+            <label class="evolve-label">Cycle Interval</label>
+            <div class="evolve-interval-row">
+              <input type="number" id="si-interval-input" class="evolve-interval-input"
+                min="1" max="120" value="5" onchange="saveInterval()">
+              <span class="evolve-unit">min</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="si-goals" class="si-goals"></div>
+      <div id="self-improve-panel" class="self-improve-panel hidden">
+        <div class="si-header">
+          <span id="si-status-text">&#x1F504; Self-Improvement Loop</span>
+          <span id="si-cycle-badge" class="si-cycle-badge">Cycle 0</span>
+        </div>
+        <div id="si-log" class="message-area si-log"></div>
+      </div>
+      <div id="evolve-empty-state" class="evolve-empty-state">
+        <div class="empty-icon">&#x1F504;</div>
+        <div class="empty-title">Evolution Engine</div>
+        <div class="empty-desc">Set a prime directive and click Start to begin autonomous self-improvement cycles.</div>
+      </div>
+    </div>
+
     <!-- Settings Page -->
     <div id="page-settings" class="page">
       <div class="page-header">
@@ -265,6 +290,11 @@
         <h2>Theme</h2>
       </div>
       <div id="theme-picker" class="theme-picker"></div>
+      <div class="font-size-control">
+        <label>Font Size</label>
+        <input type="range" id="font-size-slider" min="12" max="24" step="1" value="16" oninput="setFontSize(this.value)">
+        <span id="font-size-label">16px</span>
+      </div>
       <div id="settings-form" class="settings-form"></div>
       <div id="settings-status" class="settings-status hidden"></div>
       <div class="page-header" style="margin-top:2rem">
