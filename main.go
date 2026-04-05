@@ -20,6 +20,17 @@ func main() {
 		log.Fatal(err)
 	}
 
+	if input.IsSetup() {
+		launchGUI := ui.RunSetupWizard()
+		if launchGUI {
+			if err := startGUI(input); err != nil {
+				fmt.Fprintf(os.Stderr, "error launching GUI: %s\n", err)
+				os.Exit(1)
+			}
+		}
+		return
+	}
+
 	if input.IsPipeMode() {
 		if err := ui.RunPipe(input); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s\n", err)

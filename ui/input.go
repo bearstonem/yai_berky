@@ -33,7 +33,7 @@ func NewUIInput() (*UiInput, error) {
 	flagSet.BoolVar(&pipeMode, "pipe", false, "non-interactive pipe mode (no TUI, plain text output)")
 	flagSet.BoolVar(&guiMode, "gui", false, "start web GUI")
 	flagSet.IntVar(&guiPort, "port", 6900, "port for web GUI")
-	flagSet.BoolVar(&setup, "setup", false, "run the configuration wizard")
+	flagSet.BoolVar(&setup, "setup", false, "run the interactive setup wizard")
 	flagSet.StringVar(&remote, "remote", "", "SSH target (user@host) for remote agent mode")
 	err := flagSet.Parse(os.Args[1:])
 	if err != nil {
